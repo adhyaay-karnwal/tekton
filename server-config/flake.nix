@@ -1,13 +1,9 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    microvm = {
-      url = "github:astro/microvm.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, microvm, ... }:
+  outputs = { self, nixpkgs, ... }:
   let
     system = "x86_64-linux";
     pkgs = import nixpkgs {
@@ -15,14 +11,21 @@
       config.allowUnfree = true;  # Required for Claude Code
     };
   in {
+    # Host server configuration
     nixosConfigurations.nixos-server = nixpkgs.lib.nixosSystem {
       inherit system;
       modules = [
         { nixpkgs.pkgs = pkgs; }
-        microvm.nixosModules.host
         ./configuration.nix
-        ./microvm-host.nix
-        ./microvm-agent.nix
+      ];
+    };
+
+    # Agent container configuration (used by nixos-container create --flake)
+    nixosConfigurations.agent = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        { nixpkgs.pkgs = pkgs; }
+        ./agent-config.nix
       ];
     };
   };

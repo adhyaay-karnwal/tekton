@@ -1,4 +1,4 @@
-# Main NixOS configuration for Hetzner server with microvm support
+# Main NixOS configuration for Hetzner server with nspawn agent containers
 # UPDATE: IP addresses, gateway, and SSH key before use
 { config, lib, pkgs, modulesPath, ... }:
 {
@@ -19,7 +19,6 @@
   };
 
   boot.initrd.availableKernelModules = [ "ahci" "sd_mod" "r8169" ];
-  boot.kernelModules = [ "kvm-intel" ];
 
   # Filesystems (created by disko during initial install)
   fileSystems."/" = {
@@ -51,10 +50,10 @@
 
     nameservers = [ "185.12.64.1" "185.12.64.2" ];
 
-    # Enable NAT for microvms
+    # Enable NAT for agent containers (ve-+ matches all container veth interfaces)
     nat = {
       enable = true;
-      internalInterfaces = [ "microbr" ];
+      internalInterfaces = [ "ve-+" ];
       externalInterface = "enp3s0";
     };
   };
@@ -73,6 +72,15 @@
     "ssh-ed25519 AAAA... your-key-here"
   ];
 
+  # Enable IP forwarding for container NAT
+  boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+
+  # Required for imperative nixos-container create/start/stop
+  boot.enableContainers = true;
+
+  # Enable flakes (needed by nixos-container --flake)
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
   environment.systemPackages = with pkgs; [
     vim
     git
@@ -80,6 +88,11 @@
     htop
     tmux
     claude-code  # For initial credential setup on host
+    (pkgs.writeShellApplication {
+      name = "agent";
+      runtimeInputs = [ nixos-container openssh ];
+      text = builtins.readFile ./agent.sh;
+    })
   ];
 
   system.stateVersion = "24.11";

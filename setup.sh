@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # =============================================================================
-# NixOS MicroVM Setup Script for Claude Code Agents on Hetzner
+# NixOS Setup Script for Claude Code Agents on Hetzner
 # =============================================================================
 # Automates the full setup: network detection, NixOS installation, server
-# configuration, and Claude credential setup.
+# configuration with nspawn containers, and Claude credential setup.
 # =============================================================================
 
 # -- Colors -------------------------------------------------------------------
@@ -153,16 +153,46 @@ gather_info() {
     fi
     success "Detected gateway: $GATEWAY"
 
-    # Detect interface
-    INTERFACE=$(ssh $ssh_opts root@"$SERVER_IP" "ip route | grep default | awk '{print \$5}'" 2>/dev/null) || true
-    if [[ -z "$INTERFACE" ]]; then
+    # Detect interface — rescue mode uses legacy names (eth0) but NixOS uses
+    # predictable names (enp3s0). Derive the predictable name from the PCI slot.
+    local rescue_iface
+    rescue_iface=$(ssh $ssh_opts root@"$SERVER_IP" "ip route | grep default | awk '{print \$5}'" 2>/dev/null) || true
+    if [[ -z "$rescue_iface" ]]; then
         fatal "Could not detect network interface."
     fi
-    success "Detected interface: $INTERFACE"
 
-    # Detect prefix length
+    INTERFACE=$(ssh $ssh_opts root@"$SERVER_IP" "
+        iface='$rescue_iface'
+        # Read the PCI slot from sysfs (e.g. 0000:03:00.0)
+        slot=\$(basename \$(readlink -f /sys/class/net/\$iface/device) 2>/dev/null) || true
+        if [ -n \"\$slot\" ]; then
+            # Parse domain:bus:device.function → enp{bus}s{device}f{function}
+            # Strip leading domain (0000:), then parse bus:dev.fn
+            bdf=\${slot##*:}  # get last part after last colon: e.g. 00.0
+            bus_hex=\$(echo \$slot | rev | cut -d: -f2 | rev)  # second-to-last field
+            dev_hex=\${bdf%%.*}
+            fn=\${bdf##*.}
+            bus=\$((16#\$bus_hex))
+            dev=\$((16#\$dev_hex))
+            if [ \"\$fn\" = \"0\" ]; then
+                echo \"enp\${bus}s\${dev}\"
+            else
+                echo \"enp\${bus}s\${dev}f\${fn}\"
+            fi
+        else
+            echo \"\$iface\"
+        fi
+    " 2>/dev/null) || true
+
+    if [[ -z "$INTERFACE" ]]; then
+        INTERFACE="$rescue_iface"
+        warn "Could not derive predictable interface name, using rescue name: $INTERFACE"
+    fi
+    success "Detected interface: $INTERFACE (rescue: $rescue_iface)"
+
+    # Detect prefix length (use rescue_iface since we're still in rescue mode)
     PREFIX_LENGTH=$(ssh $ssh_opts root@"$SERVER_IP" \
-        "ip -4 addr show dev $INTERFACE | grep 'inet ' | head -1 | awk '{print \$2}' | cut -d/ -f2" 2>/dev/null) || true
+        "ip -4 addr show dev $rescue_iface | grep 'inet ' | head -1 | awk '{print \$2}' | cut -d/ -f2" 2>/dev/null) || true
     if [[ -z "$PREFIX_LENGTH" ]]; then
         warn "Could not detect prefix length, defaulting to 26"
         PREFIX_LENGTH="26"
@@ -247,7 +277,7 @@ install_nixos() {
 
 # -- Phase 3: Configure server -----------------------------------------------
 configure_server() {
-    header "Phase 3: Configure Server with MicroVM Support"
+    header "Phase 3: Configure Server with Agent Container Support"
 
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -272,8 +302,8 @@ configure_server() {
     sed -i.tmp "s|externalInterface = \"enp3s0\"|externalInterface = \"$INTERFACE\"|g" "$cfg"
     rm -f "$cfg.tmp"
 
-    # --- microvm-agent.nix ---
-    local agent_cfg="$tmp_dir/microvm-agent.nix"
+    # --- agent-config.nix ---
+    local agent_cfg="$tmp_dir/agent-config.nix"
     sed -i.tmp "s|ssh-ed25519 AAAA... your-key-here|$SSH_KEY|g" "$agent_cfg"
     rm -f "$agent_cfg.tmp"
 
@@ -284,10 +314,10 @@ configure_server() {
 
     success "Files copied."
 
-    info "Creating /var/secrets/claude directory..."
-    ssh $ssh_opts root@"$SERVER_IP" "mkdir -p /var/secrets/claude && chmod 755 /var/secrets /var/secrets/claude"
+    info "Creating directories..."
+    ssh $ssh_opts root@"$SERVER_IP" "mkdir -p /var/secrets/claude /var/lib/claude-agents && chmod 755 /var/secrets /var/secrets/claude"
 
-    success "Secrets directory created."
+    success "Directories created."
 
     info "Running nixos-rebuild switch (this may take a while on first run)..."
     local gen_before gen_after
@@ -302,7 +332,7 @@ configure_server() {
         warn "New generation active ($gen_after). Non-critical service errors occurred during activation — safe to continue."
     fi
 
-    success "Server configured with MicroVM support."
+    success "Server configured with agent container support."
 
     # Clean up
     rm -rf "$tmp_dir"
@@ -331,16 +361,16 @@ setup_claude() {
 
     # Always fix permissions if credentials exist — the login may have succeeded
     # even if claude exited non-zero (e.g. trust prompt dismissed).
-    # Files must be world-readable so the VM can access them through virtiofs.
+    # Files must be world-readable so containers can access them via bind mount.
     if ssh $ssh_opts root@"$SERVER_IP" "test -f /var/secrets/claude/.credentials.json"; then
         info "Fixing credential permissions..."
-        ssh $ssh_opts root@"$SERVER_IP" "chown -R microvm:kvm /var/secrets/claude && chmod -R a+rX /var/secrets/claude"
+        ssh $ssh_opts root@"$SERVER_IP" "chmod -R a+rX /var/secrets/claude"
         success "Credentials found and permissions set."
     else
         warn "No credentials found at /var/secrets/claude/.credentials.json"
         warn "You can log in later with:"
         echo "  ssh -t root@$SERVER_IP 'CLAUDE_CONFIG_DIR=/var/secrets/claude claude login'"
-        echo "  ssh root@$SERVER_IP 'chown -R microvm:kvm /var/secrets/claude && chmod -R a+rX /var/secrets/claude'"
+        echo "  ssh root@$SERVER_IP 'chmod -R a+rX /var/secrets/claude'"
     fi
 }
 
@@ -348,33 +378,36 @@ setup_claude() {
 print_summary() {
     header "Setup Complete!"
 
-    echo -e "${GREEN}Your NixOS server with MicroVM support is ready.${NC}"
+    echo -e "${GREEN}Your NixOS server with agent container support is ready.${NC}"
     echo ""
     echo -e "${BOLD}Quick Start:${NC}"
     echo ""
-    echo -e "  ${CYAN}# Start a MicroVM${NC}"
-    echo "  ssh root@$SERVER_IP 'systemctl start microvm@agent1'"
+    echo -e "  ${CYAN}# Create a new agent container (instant after first build)${NC}"
+    echo "  ssh root@$SERVER_IP 'agent create myagent'"
     echo ""
-    echo -e "  ${CYAN}# SSH into the MicroVM${NC}"
-    echo "  ssh -J root@$SERVER_IP agent@192.168.83.10"
+    echo -e "  ${CYAN}# SSH into the agent${NC}"
+    echo "  ssh -J root@$SERVER_IP agent@<container-ip>"
     echo ""
-    echo -e "  ${CYAN}# Run Claude in the MicroVM${NC}"
+    echo -e "  ${CYAN}# Run Claude in the container${NC}"
     echo "  claude"
     echo ""
     echo -e "  ${CYAN}# Run Claude headlessly (skip all permission prompts)${NC}"
     echo "  claude --dangerously-skip-permissions"
     echo ""
-    echo -e "  ${CYAN}# Stop the MicroVM${NC}"
-    echo "  ssh root@$SERVER_IP 'systemctl stop microvm@agent1'"
+    echo -e "  ${CYAN}# List agents${NC}"
+    echo "  ssh root@$SERVER_IP 'agent list'"
     echo ""
-    echo -e "See ${BOLD}README.md${NC} for more details on managing MicroVMs."
+    echo -e "  ${CYAN}# Destroy when done${NC}"
+    echo "  ssh root@$SERVER_IP 'agent destroy myagent'"
+    echo ""
+    echo -e "See ${BOLD}README.md${NC} for more details on managing agents."
 }
 
 # -- Main ---------------------------------------------------------------------
 main() {
     echo -e "${BOLD}${CYAN}"
     echo "  ╔══════════════════════════════════════════════════════════╗"
-    echo "  ║   NixOS MicroVM Setup for Claude Code Agents           ║"
+    echo "  ║   NixOS Setup for Claude Code Agents                   ║"
     echo "  ║   Hetzner Dedicated Server                             ║"
     echo "  ╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"

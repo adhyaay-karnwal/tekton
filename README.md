@@ -1,8 +1,8 @@
-# NixOS MicroVM Setup for Claude Code Agents on Hetzner
+# NixOS Setup for Claude Code Agents on Hetzner
 
-> Based on [Michael Stapelberg's blog post](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/) on running coding agents in NixOS MicroVMs. Uses [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) for remote NixOS installation and [microvm.nix](https://github.com/astro/microvm.nix) for lightweight VM management.
+> Inspired by [Michael Stapelberg's blog post](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/) on running coding agents in NixOS. Uses [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) for remote NixOS installation and imperative [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/latest/systemd-nspawn.html) containers for lightweight, instant agent creation.
 
-This repo sets up a Hetzner bare metal server with NixOS and MicroVMs for running Claude Code agents in isolated, ephemeral environments.
+This repo sets up a Hetzner bare metal server with NixOS and nspawn containers for running Claude Code agents in isolated, ephemeral environments. Spinning up a new agent is a single command — no config files to edit, no rebuilds.
 
 ## Directory Structure
 
@@ -16,9 +16,9 @@ nixos-claude/
 │   └── configuration.nix
 └── server-config/               # Copied to /etc/nixos after install
     ├── flake.nix
-    ├── configuration.nix
-    ├── microvm-host.nix         # Bridge networking setup
-    └── microvm-agent.nix        # MicroVM definition
+    ├── configuration.nix        # Host server config
+    ├── agent-config.nix         # Reusable agent container config
+    └── agent.sh                 # Agent lifecycle helper script
 ```
 
 ## Prerequisites
@@ -47,24 +47,31 @@ The script will:
 1. **Prompt** for your server IP and SSH public key
 2. **Auto-detect** the gateway, network interface, and prefix length by SSHing into rescue mode
 3. **Install NixOS** via nixos-anywhere (takes ~5-10 minutes)
-4. **Configure the server** with MicroVM support and copy the server config
+4. **Configure the server** with container support and copy the server config
 5. **Run `claude login`** interactively so you can authenticate via OAuth
 
 No manual editing of configuration files is needed - the script handles all substitutions on temporary copies and leaves the repo files untouched.
 
-## Using MicroVMs
+## Using Agent Containers
 
-### Start a VM
+### Create an agent
 
 ```bash
-ssh root@YOUR_SERVER_IP 'systemctl start microvm@agent1'
+ssh root@YOUR_SERVER_IP 'agent create myagent'
 ```
 
-### SSH into the VM
+This instantly creates and starts a new container with its own IP, SSH access, and Claude credentials. The first run builds the container config (takes a few minutes); subsequent creates are near-instant.
 
-From your local machine (uses SSH jump, no password needed):
+### SSH into an agent
+
+From the host:
 ```bash
-ssh -J root@YOUR_SERVER_IP agent@192.168.83.10
+agent ssh myagent
+```
+
+From your local machine (uses SSH jump):
+```bash
+ssh -J root@YOUR_SERVER_IP agent@<container-ip>
 ```
 
 ### Run Claude
@@ -77,56 +84,48 @@ claude
 claude --dangerously-skip-permissions
 ```
 
-### Stop the VM
+### List agents
 
 ```bash
-ssh root@YOUR_SERVER_IP 'systemctl stop microvm@agent1'
+ssh root@YOUR_SERVER_IP 'agent list'
 ```
 
-## Adding More MicroVMs
+### Destroy an agent
 
-Create additional files like `microvm-agent2.nix` with different:
-- `vmName` (e.g., "agent2")
-- `vmIP` (e.g., "192.168.83.11")
-- `vmMAC` (e.g., "02:00:00:00:00:11")
-
-Add to `flake.nix` modules list, then `nixos-rebuild switch` on the server.
+```bash
+ssh root@YOUR_SERVER_IP 'agent destroy myagent'
+```
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| VM fails with "permission denied" on start | `chmod 755 /var/secrets/claude` on host |
-| SSH host key warning after VM restart | `ssh-keygen -R 192.168.83.10` |
-| Claude "Invalid API key" in VM | Re-run `claude login` on host with `CLAUDE_CONFIG_DIR=/var/secrets/claude`, fix permissions, restart VM |
-| Claude permission errors in VM | `chown -R microvm:kvm /var/secrets/claude && chmod -R 755 /var/secrets/claude` on host |
+| Container fails to start | Check `journalctl -u container@<name>` on host |
+| SSH host key warning after container recreate | `ssh-keygen -R <container-ip>` |
+| Claude "Invalid API key" in container | Re-run `claude login` on host with `CLAUDE_CONFIG_DIR=/var/secrets/claude`, fix permissions, recreate container |
+| Claude permission errors | `chmod -R a+rX /var/secrets/claude` on host, then recreate container |
 | systemd-networkd-wait-online timeout | Benign - ignore it |
-| Claude hangs on startup | Check credentials exist: `ls /home/agent/.claude/` in VM |
+| Claude hangs on startup | Check credentials exist: `ls /home/agent/.claude/` in container |
 | Claude shows onboarding screen | Credentials not copied - check `/mnt/claude-creds/` is mounted and has files |
 
 ## Quick Reference
 
 ```bash
-# VM management
-systemctl start microvm@agent1
-systemctl stop microvm@agent1
-systemctl status microvm@agent1
-
-# View logs
-journalctl -u microvm@agent1 -f
-
-# SSH into VM
-ssh -J root@YOUR_SERVER_IP agent@192.168.83.10
+# Agent management (run on host as root)
+agent create myagent
+agent ssh myagent
+agent list
+agent destroy myagent
 
 # Rebuild after config changes
 cd /etc/nixos && nixos-rebuild switch
 
 # Re-authenticate Claude (on host)
 CLAUDE_CONFIG_DIR=/var/secrets/claude claude login
-chown -R microvm:kvm /var/secrets/claude
-chmod -R 755 /var/secrets/claude
+chmod -R a+rX /var/secrets/claude
 
-# Verify credentials in VM
+# Verify credentials in container
+agent ssh myagent
 ls -la /home/agent/.claude/
 echo $CLAUDE_CONFIG_DIR  # Should show /home/agent/.claude
 ```

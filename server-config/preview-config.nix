@@ -25,8 +25,11 @@
   # Setup preview: clone repo, install deps, build
   systemd.services.setup-preview = {
     description = "Setup preview deployment (clone, install, build)";
-    wantedBy = [ "multi-user.target" ];
+    # Not started at boot — triggered from host after container is up
+    after = [ "systemd-resolved.service" ];
+    wants = [ "systemd-resolved.service" ];
     before = [ "preview-app.service" ];
+    path = [ pkgs.bash pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.nodejs_22 ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -61,8 +64,13 @@
       fi
 
       # Install dependencies
-      echo "Installing dependencies..."
-      ${pkgs.nodejs_22}/bin/npm ci
+      if [ -f package-lock.json ]; then
+        echo "Installing dependencies (npm ci)..."
+        ${pkgs.nodejs_22}/bin/npm ci
+      else
+        echo "No lockfile found, installing dependencies (npm install)..."
+        ${pkgs.nodejs_22}/bin/npm install
+      fi
 
       # Build
       echo "Building application..."
@@ -75,9 +83,10 @@
   # Preview app: run the built application
   systemd.services.preview-app = {
     description = "Preview application";
-    wantedBy = [ "multi-user.target" ];
+    # Not started at boot — triggered from host after container is up
     after = [ "setup-preview.service" ];
     requires = [ "setup-preview.service" ];
+    path = [ pkgs.bash pkgs.coreutils pkgs.nodejs_22 ];
     serviceConfig = {
       Type = "simple";
       User = "preview";

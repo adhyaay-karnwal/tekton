@@ -106,13 +106,8 @@ gather_info() {
     elif [[ ${#pub_keys[@]} -eq 1 ]]; then
         SSH_KEY=$(cat "${pub_keys[0]}")
         SSH_IDENTITY="${pub_keys[0]%.pub}"
-        info "Found one key: ${pub_keys[0]}"
+        success "Using SSH key: ${pub_keys[0]}"
         echo -e "  ${CYAN}${SSH_KEY:0:60}...${NC}"
-        if ! confirm "Use this key?"; then
-            echo -en "${BOLD}Paste your SSH public key:${NC} "
-            read -r SSH_KEY
-            SSH_IDENTITY=""
-        fi
     else
         info "Found multiple SSH public keys:"
         for i in "${!pub_keys[@]}"; do
@@ -234,25 +229,7 @@ gather_info() {
         fi
         success "Preview domain: $PREVIEW_DOMAIN"
 
-        echo -e "${CYAN}AWS credentials for Route 53 DNS-01 challenge (wildcard TLS):${NC}"
-        echo -en "${BOLD}AWS Access Key ID:${NC} "
-        read -r AWS_ACCESS_KEY_ID
-        if [[ -z "$AWS_ACCESS_KEY_ID" ]]; then
-            fatal "AWS Access Key ID is required for wildcard certificates."
-        fi
-
-        echo -en "${BOLD}AWS Secret Access Key:${NC} "
-        read -r AWS_SECRET_ACCESS_KEY
-        if [[ -z "$AWS_SECRET_ACCESS_KEY" ]]; then
-            fatal "AWS Secret Access Key is required for wildcard certificates."
-        fi
-
-        echo -en "${BOLD}AWS Region (e.g. us-east-1):${NC} "
-        read -r AWS_REGION
-        AWS_REGION="${AWS_REGION:-us-east-1}"
-        success "AWS credentials set (region: $AWS_REGION)."
-
-        echo -en "${BOLD}GitHub token (for cloning repos and posting PR comments):${NC} "
+        echo -en "${BOLD}GitHub token (for cloning repos into preview containers):${NC} "
         read -r PREVIEW_GITHUB_TOKEN
         if [[ -z "$PREVIEW_GITHUB_TOKEN" ]]; then
             fatal "GitHub token is required."
@@ -299,9 +276,10 @@ install_nixos() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local work_dir="$script_dir/initial-install"
     local config_file="$work_dir/configuration.nix"
-    local backup_file="$config_file.bak"
+    local backup_file
+    backup_file=$(mktemp)
 
-    # Create backup
+    # Create backup (outside the flake directory so nix evaluation can't interfere)
     cp "$config_file" "$backup_file"
 
     info "Substituting values in initial-install/configuration.nix..."
@@ -320,10 +298,16 @@ install_nixos() {
 
     success "Configuration updated."
 
+    # Ensure rescue system has working DNS (Hetzner rescue may lack resolv.conf
+    # and nixos-anywhere's build env expects systemd-resolved which doesn't exist)
+    local ssh_opts="$SSH_IDENTITY_OPT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR"
+    info "Ensuring DNS is configured in rescue system..."
+    ssh $ssh_opts root@"$SERVER_IP" 'grep -q nameserver /etc/resolv.conf 2>/dev/null || echo "nameserver 1.1.1.1" > /etc/resolv.conf'
+
     info "Running nixos-anywhere (this will take 5-10 minutes)..."
     echo ""
 
-    if ! (cd "$work_dir" && nix run github:nix-community/nixos-anywhere -- \
+    if ! (cd "$work_dir" && nix run github:nix-community/nixos-anywhere/1.13.0 -- \
         --flake '.#hetzner-dedicated' \
         root@"$SERVER_IP"); then
         # Restore backup on failure
@@ -362,10 +346,10 @@ configure_server() {
     local server_dir="$script_dir/server-config"
     local ssh_opts="$SSH_IDENTITY_OPT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
-    # Create temp working copies
+    # Create temp working copies (exclude node_modules and dist from webhook)
     local tmp_dir
     tmp_dir=$(mktemp -d)
-    cp -r "$server_dir"/. "$tmp_dir/"
+    rsync -a --exclude='node_modules' --exclude='dist' "$server_dir"/ "$tmp_dir/"
 
     info "Substituting values in server-config files..."
 
@@ -412,14 +396,6 @@ configure_server() {
 
         ssh $ssh_opts root@"$SERVER_IP" "mkdir -p /var/lib/preview-deploys /etc/caddy/previews /opt/preview-webhook"
 
-        # Write /var/secrets/caddy.env
-        ssh $ssh_opts root@"$SERVER_IP" "cat > /var/secrets/caddy.env <<ENVEOF
-AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-AWS_REGION=${AWS_REGION}
-ENVEOF
-chmod 600 /var/secrets/caddy.env"
-
         # Write /var/secrets/preview.env
         ssh $ssh_opts root@"$SERVER_IP" "cat > /var/secrets/preview.env <<ENVEOF
 GITHUB_TOKEN=${PREVIEW_GITHUB_TOKEN}
@@ -432,30 +408,51 @@ chmod 600 /var/secrets/preview.env"
 
         success "Preview secrets written."
 
-        # Copy and build webhook service
-        info "Deploying preview webhook service..."
+        # Copy webhook source (build happens after nixos-rebuild makes npm available)
+        info "Copying preview webhook source..."
         scp $ssh_opts -r "$tmp_dir/preview-webhook"/. root@"$SERVER_IP":/opt/preview-webhook/
-        ssh $ssh_opts root@"$SERVER_IP" "cd /opt/preview-webhook && npm ci && npm run build"
-
-        success "Preview webhook service deployed."
+        success "Preview webhook source copied."
     fi
 
     success "Directories created."
 
     info "Running nixos-rebuild switch (this may take a while on first run)..."
-    local gen_before gen_after
+    local gen_before gen_after rebuild_output
     gen_before=$(ssh $ssh_opts root@"$SERVER_IP" "readlink /nix/var/nix/profiles/system")
 
-    if ! ssh $ssh_opts root@"$SERVER_IP" "cd /etc/nixos && nixos-rebuild switch"; then
-        warn "nixos-rebuild switch exited with errors, verifying the switch applied..."
-        gen_after=$(ssh $ssh_opts root@"$SERVER_IP" "readlink /nix/var/nix/profiles/system")
-        if [[ "$gen_before" == "$gen_after" ]]; then
-            fatal "nixos-rebuild switch failed and no new generation was created. SSH into the server to investigate."
+    if ! rebuild_output=$(ssh $ssh_opts root@"$SERVER_IP" "cd /etc/nixos && nixos-rebuild switch 2>&1"); then
+        # Check if it failed due to the empty Caddy plugin hash — extract the real hash and retry
+        local caddy_hash
+        caddy_hash=$(echo "$rebuild_output" | sed -n 's/.*got: *\(sha256-[A-Za-z0-9+/=]*\).*/\1/p' | head -1)
+        if [[ -n "$caddy_hash" ]]; then
+            warn "Caddy plugin hash was empty. Got: $caddy_hash — patching and retrying..."
+            ssh $ssh_opts root@"$SERVER_IP" "sed -i 's|hash = \".*\";.*# Leave empty on first build.*|hash = \"$caddy_hash\";|' /etc/nixos/configuration.nix"
+            if ! ssh $ssh_opts root@"$SERVER_IP" "cd /etc/nixos && nixos-rebuild switch"; then
+                warn "nixos-rebuild switch exited with errors on retry, verifying..."
+                gen_after=$(ssh $ssh_opts root@"$SERVER_IP" "readlink /nix/var/nix/profiles/system")
+                if [[ "$gen_before" == "$gen_after" ]]; then
+                    fatal "nixos-rebuild switch failed and no new generation was created. SSH into the server to investigate."
+                fi
+                warn "New generation active ($gen_after). Non-critical service errors occurred during activation — safe to continue."
+            fi
+        else
+            warn "nixos-rebuild switch exited with errors, verifying the switch applied..."
+            gen_after=$(ssh $ssh_opts root@"$SERVER_IP" "readlink /nix/var/nix/profiles/system")
+            if [[ "$gen_before" == "$gen_after" ]]; then
+                echo "$rebuild_output"
+                fatal "nixos-rebuild switch failed and no new generation was created. SSH into the server to investigate."
+            fi
+            warn "New generation active ($gen_after). Non-critical service errors occurred during activation — safe to continue."
         fi
-        warn "New generation active ($gen_after). Non-critical service errors occurred during activation — safe to continue."
     fi
 
     success "Server configured with agent container support."
+
+    if [[ "$SETUP_PREVIEWS" == "y" ]]; then
+        info "Building preview webhook service..."
+        ssh $ssh_opts root@"$SERVER_IP" "cd /opt/preview-webhook && npm ci && npm run build"
+        success "Preview webhook service deployed."
+    fi
 
     info "Pre-building agent container closure (so first 'agent create' is instant)..."
     ssh $ssh_opts root@"$SERVER_IP" "agent build" || {

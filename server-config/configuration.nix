@@ -94,28 +94,19 @@
     '';
   };
 
-  # Caddy reverse proxy for preview deployments (wildcard TLS via DNS-01)
+  # Caddy reverse proxy for preview deployments (plain HTTP)
   services.caddy = {
     enable = true;
-    package = pkgs.caddy.withPlugins {
-      plugins = [ "github.com/caddy-dns/route53@v1.3.3" ];
-      hash = "";  # Leave empty on first build, then insert the hash from the error
-    };
-    virtualHosts."*.preview.DOMAIN" = {
+    globalConfig = ''
+      auto_https off
+    '';
+    virtualHosts."http://*.preview.DOMAIN" = {
       extraConfig = ''
-        tls {
-          dns route53 {
-            access_key_id {env.AWS_ACCESS_KEY_ID}
-            secret_access_key {env.AWS_SECRET_ACCESS_KEY}
-            region {env.AWS_REGION}
-          }
-        }
         import /etc/caddy/previews/*
         respond "Preview not found" 404
       '';
     };
   };
-  systemd.services.caddy.serviceConfig.EnvironmentFile = "/var/secrets/caddy.env";
 
   environment.systemPackages = with pkgs; [
     vim
@@ -124,6 +115,7 @@
     htop
     tmux
     claude-code  # For initial credential setup on host
+    nodejs_22   # For building/running the preview webhook
     postgresql  # For preview DB management (psql)
     (pkgs.writeShellApplication {
       name = "agent";
@@ -138,7 +130,7 @@
   ];
 
   # Firewall: allow HTTP, HTTPS, and webhook port
-  networking.firewall.allowedTCPPorts = [ 80 443 3100 ];
+  networking.firewall.allowedTCPPorts = [ 80 3100 ];
 
   # GitHub PR Preview Webhook service
   systemd.services.preview-webhook = {

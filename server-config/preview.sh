@@ -102,7 +102,7 @@ create_db() {
     local db_pass
     db_pass=$(generate_password)
 
-    info "Creating PostgreSQL database '$db_name'..."
+    info "Creating PostgreSQL database '$db_name'..." >&2
 
     # Create user and database
     sudo -u postgres psql -c "CREATE USER ${db_user} WITH PASSWORD '${db_pass}';" 2>/dev/null || \
@@ -241,16 +241,16 @@ cmd_create() {
     mkdir -p "$(dirname "$env_file")"
 
     local clone_url="https://x-access-token:${github_token}@github.com/${repo}.git"
-    local preview_url="https://${slug}.${domain}"
+    local preview_url="http://${slug}.${domain}"
 
     cat > "$env_file" <<EOF
-PREVIEW_REPO_URL=${clone_url}
-PREVIEW_BRANCH=${branch}
-DATABASE_URL=postgresql://${db_user}:${db_pass}@${host_ip}:5432/${db_name}
+PREVIEW_REPO_URL='${clone_url}'
+PREVIEW_BRANCH='${branch}'
+DATABASE_URL='postgresql://${db_user}:${db_pass}@${host_ip}:5432/${db_name}'
 PORT=3000
 NODE_ENV=production
-APP_URL=${preview_url}
-NEXT_PUBLIC_APP_URL=${preview_url}
+APP_URL='${preview_url}'
+NEXT_PUBLIC_APP_URL='${preview_url}'
 EOF
     chmod 644 "$env_file"
 
@@ -260,6 +260,9 @@ EOF
 
     # Start the container
     nixos-container start "$slug"
+
+    # Kick off setup (runs in background — clone, install, build, then starts the app)
+    nixos-container run "$slug" -- systemctl start setup-preview preview-app &
 
     # Write Caddy route
     write_caddy_route "$slug" "$local_ip"
@@ -352,7 +355,7 @@ cmd_list() {
             status="${YELLOW}stopped${NC}"
         fi
 
-        local url="https://${name}.${domain}"
+        local url="http://${name}.${domain}"
         printf "%-19s %-23b %-31s %s\n" "$name" "$status" "$branch" "$url"
     done
 

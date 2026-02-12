@@ -10,6 +10,7 @@ FLAKE_DIR="/etc/nixos"
 SECRETS_FILE="/var/secrets/preview.env"
 SUBNET="10.100.0"
 SYSTEM_PATH_CACHE="$PREVIEW_DIR/.system-path"
+VERTEX_SYSTEM_PATH_CACHE="$PREVIEW_DIR/.vertex-system-path"
 
 # -- Load secrets -------------------------------------------------------------
 load_secrets() {
@@ -62,6 +63,22 @@ get_system_path() {
     echo "$path"
 }
 
+get_vertex_system_path() {
+    if [[ -f "$VERTEX_SYSTEM_PATH_CACHE" ]]; then
+        local cached
+        cached=$(cat "$VERTEX_SYSTEM_PATH_CACHE")
+        if [[ -d "$cached" ]]; then
+            echo "$cached"
+            return
+        fi
+    fi
+    info "Building vertex preview system closure (first time only)..." >&2
+    local path
+    path=$(nix build "${FLAKE_DIR}#nixosConfigurations.vertex-preview.config.system.build.toplevel" --no-link --print-out-paths)
+    echo "$path" > "$VERTEX_SYSTEM_PATH_CACHE"
+    echo "$path"
+}
+
 # -- IP allocation (shared with agents) --------------------------------------
 
 next_slot() {
@@ -104,10 +121,10 @@ create_db() {
 
     info "Creating PostgreSQL database '$db_name'..." >&2
 
-    # Create user and database
-    sudo -u postgres psql -c "CREATE USER ${db_user} WITH PASSWORD '${db_pass}';" 2>/dev/null || \
-        sudo -u postgres psql -c "ALTER USER ${db_user} WITH PASSWORD '${db_pass}';"
-    sudo -u postgres psql -c "CREATE DATABASE ${db_name} OWNER ${db_user};" 2>/dev/null || true
+    # Create user and database (suppress stdout to avoid polluting the password return)
+    sudo -u postgres psql -c "CREATE USER ${db_user} WITH PASSWORD '${db_pass}';" &>/dev/null || \
+        sudo -u postgres psql -c "ALTER USER ${db_user} WITH PASSWORD '${db_pass}';" &>/dev/null
+    sudo -u postgres psql -c "CREATE DATABASE ${db_name} OWNER ${db_user};" &>/dev/null || true
 
     echo "$db_pass"
 }
@@ -145,29 +162,102 @@ remove_caddy_route() {
     systemctl reload caddy
 }
 
+write_vertex_caddy_route() {
+    local slug="$1"
+    local container_ip="$2"
+    local domain="${PREVIEW_DOMAIN:-preview.example.com}"
+
+    cat > "${CADDY_DIR}/${slug}.caddy" <<EOF
+@${slug} host ${slug}.${domain}
+handle @${slug} {
+    handle /api/* {
+        reverse_proxy ${container_ip}:4000
+    }
+    handle /admin/* {
+        reverse_proxy ${container_ip}:3000
+    }
+    reverse_proxy ${container_ip}:3001
+}
+EOF
+
+    systemctl reload caddy
+}
+
+# -- Secret generation helpers ------------------------------------------------
+
+generate_secret_hex() {
+    local length="${1:-64}"
+    head -c $(( length / 2 + 1 )) /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c "$length"
+}
+
+generate_secret_base64() {
+    local bytes="${1:-32}"
+    head -c "$bytes" /dev/urandom | base64 | tr -d '\n'
+}
+
+# -- Preview type detection ---------------------------------------------------
+
+get_preview_type() {
+    local slug="$1"
+    local type_file="$PREVIEW_DIR/${slug}.type"
+    if [[ -f "$type_file" ]]; then
+        cat "$type_file"
+    else
+        echo "node"
+    fi
+}
+
 # -- Commands -----------------------------------------------------------------
 
 cmd_build() {
+    local type="node"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type) type="$2"; shift 2 ;;
+            *) fatal "Unknown argument: $1" ;;
+        esac
+    done
+
     ensure_root
     ensure_dirs
 
-    info "Building preview system closure..."
-    local path
-    path=$(nix build "${FLAKE_DIR}#nixosConfigurations.preview.config.system.build.toplevel" --no-link --print-out-paths)
-    echo "$path" > "$SYSTEM_PATH_CACHE"
-    success "System closure built and cached: $path"
+    case "$type" in
+        node)
+            info "Building preview system closure..."
+            local path
+            path=$(nix build "${FLAKE_DIR}#nixosConfigurations.preview.config.system.build.toplevel" --no-link --print-out-paths)
+            echo "$path" > "$SYSTEM_PATH_CACHE"
+            success "System closure built and cached: $path"
+            ;;
+        vertex)
+            info "Building vertex preview system closure..."
+            local path
+            path=$(nix build "${FLAKE_DIR}#nixosConfigurations.vertex-preview.config.system.build.toplevel" --no-link --print-out-paths)
+            echo "$path" > "$VERTEX_SYSTEM_PATH_CACHE"
+            success "Vertex system closure built and cached: $path"
+            ;;
+        *)
+            fatal "Unknown preview type: $type. Supported: node, vertex"
+            ;;
+    esac
 }
 
 cmd_create() {
     local repo=""
     local branch=""
     local slug=""
+    local type="node"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --slug)
                 slug="$2"
+                shift 2
+                ;;
+            --type)
+                type="$2"
                 shift 2
                 ;;
             *)
@@ -184,7 +274,11 @@ cmd_create() {
     done
 
     if [[ -z "$repo" ]] || [[ -z "$branch" ]]; then
-        fatal "Usage: preview create <owner/repo> <branch> [--slug <slug>]"
+        fatal "Usage: preview create <owner/repo> <branch> [--slug <slug>] [--type <node|vertex>]"
+    fi
+
+    if [[ "$type" != "node" ]] && [[ "$type" != "vertex" ]]; then
+        fatal "Unknown preview type: $type. Supported: node, vertex"
     fi
 
     ensure_root
@@ -212,16 +306,20 @@ cmd_create() {
         fatal "GITHUB_TOKEN not set. Check $SECRETS_FILE"
     fi
 
-    # Get pre-built system path
+    # Get pre-built system path (type-specific)
     local system_path
-    system_path=$(get_system_path)
+    if [[ "$type" == "vertex" ]]; then
+        system_path=$(get_vertex_system_path)
+    else
+        system_path=$(get_system_path)
+    fi
 
     # Allocate IP
     local slot
     slot=$(next_slot)
     read -r host_ip local_ip <<< "$(slot_to_ips "$slot")"
 
-    info "Creating preview '$slug' (host=$host_ip, container=$local_ip)..."
+    info "Creating preview '$slug' (type=$type, host=$host_ip, container=$local_ip)..."
 
     # Create PostgreSQL database
     local db_pass
@@ -243,7 +341,39 @@ cmd_create() {
     local clone_url="https://x-access-token:${github_token}@github.com/${repo}.git"
     local preview_url="http://${slug}.${domain}"
 
-    cat > "$env_file" <<EOF
+    if [[ "$type" == "vertex" ]]; then
+        # Generate secrets for vertex
+        local secret_key_base
+        secret_key_base=$(generate_secret_hex 64)
+        local jwt_secret
+        jwt_secret=$(generate_secret_hex 64)
+        local db_encryption_key
+        db_encryption_key=$(generate_secret_base64 32)
+
+        # Check for optional credential overrides from host secrets
+        local postmark_key="${VERTEX_POSTMARK_API_KEY:-dummy-not-configured}"
+        local google_client_id="${VERTEX_GOOGLE_CLIENT_ID:-dummy-not-configured}"
+        local google_client_secret="${VERTEX_GOOGLE_CLIENT_SECRET:-dummy-not-configured}"
+
+        cat > "$env_file" <<EOF
+PREVIEW_REPO_URL='${clone_url}'
+PREVIEW_BRANCH='${branch}'
+DATABASE_URL='postgresql://${db_user}:${db_pass}@${host_ip}:5432/${db_name}'
+SECRET_KEY_BASE='${secret_key_base}'
+JWT_SECRET='${jwt_secret}'
+DATABASE_ENCRYPTION_KEY='${db_encryption_key}'
+PHX_HOST='${slug}.${domain}'
+PORT=4000
+FRONTEND_URL='${preview_url}'
+POSTMARK_API_KEY='${postmark_key}'
+GOOGLE_CLIENT_ID='${google_client_id}'
+GOOGLE_CLIENT_SECRET='${google_client_secret}'
+REDIS_URL='redis://localhost:6379'
+DEPLOY_ENV='testing'
+CORS_ALLOWED_ORIGINS='${preview_url}'
+EOF
+    else
+        cat > "$env_file" <<EOF
 PREVIEW_REPO_URL='${clone_url}'
 PREVIEW_BRANCH='${branch}'
 DATABASE_URL='postgresql://${db_user}:${db_pass}@${host_ip}:5432/${db_name}'
@@ -252,24 +382,30 @@ NODE_ENV=production
 APP_URL='${preview_url}'
 NEXT_PUBLIC_APP_URL='${preview_url}'
 EOF
+    fi
     chmod 644 "$env_file"
 
-    # Track the preview
+    # Track the preview (include type in tracking file)
     echo "${slot} ${host_ip} ${local_ip} ${repo} ${branch}" > "$PREVIEW_DIR/$slug"
+    echo "$type" > "$PREVIEW_DIR/${slug}.type"
     bump_slot
 
     # Start the container
     nixos-container start "$slug"
 
-    # Kick off setup (runs in background — clone, install, build, then starts the app)
-    nixos-container run "$slug" -- systemctl start setup-preview preview-app &
-
-    # Write Caddy route
-    write_caddy_route "$slug" "$local_ip"
+    # Kick off setup and services (type-specific)
+    if [[ "$type" == "vertex" ]]; then
+        nixos-container run "$slug" -- systemctl start setup-vertex vertex-backend vertex-frontend-admin vertex-frontend-foods &
+        write_vertex_caddy_route "$slug" "$local_ip"
+    else
+        nixos-container run "$slug" -- systemctl start setup-preview preview-app &
+        write_caddy_route "$slug" "$local_ip"
+    fi
 
     success "Preview '$slug' created and starting."
     echo ""
     echo -e "  ${BOLD}URL:${NC}           ${preview_url}"
+    echo -e "  ${BOLD}Type:${NC}          $type"
     echo -e "  ${BOLD}Container IP:${NC}  $local_ip"
     echo -e "  ${BOLD}Repo:${NC}          $repo"
     echo -e "  ${BOLD}Branch:${NC}        $branch"
@@ -302,8 +438,9 @@ cmd_destroy() {
     # Drop PostgreSQL database
     drop_db "$slug"
 
-    # Remove tracking file
+    # Remove tracking files
     rm -f "$PREVIEW_DIR/$slug"
+    rm -f "$PREVIEW_DIR/${slug}.type"
 
     success "Preview '$slug' destroyed."
 }
@@ -321,12 +458,18 @@ cmd_update() {
     fi
 
     read -r _slot _host_ip local_ip _repo _branch < "$PREVIEW_DIR/$slug"
+    local type
+    type=$(get_preview_type "$slug")
 
-    info "Updating preview '$slug' (pulling latest code and rebuilding)..."
+    info "Updating preview '$slug' (type=$type, pulling latest code and rebuilding)..."
 
-    # Restart setup-preview (triggers git fetch + rebuild) then restart the app
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$local_ip" \
-        "systemctl restart setup-preview && systemctl restart preview-app"
+    if [[ "$type" == "vertex" ]]; then
+        nixos-container run "$slug" -- bash -c \
+            "systemctl restart setup-vertex && systemctl restart vertex-backend vertex-frontend-admin vertex-frontend-foods"
+    else
+        nixos-container run "$slug" -- bash -c \
+            "systemctl restart setup-preview && systemctl restart preview-app"
+    fi
 
     success "Preview '$slug' is rebuilding. Check progress with: preview logs $slug --follow"
 }
@@ -344,6 +487,7 @@ cmd_list() {
         local name
         name=$(basename "$f")
         [[ "$name" == .* ]] && continue
+        [[ "$name" == *.type ]] && continue
 
         found=1
         read -r _slot _host_ip _local_ip repo branch < "$f"
@@ -371,9 +515,9 @@ cmd_logs() {
     fi
     shift
 
-    local follow_flag=""
+    local -a follow_args=()
     if [[ "${1:-}" == "--follow" ]] || [[ "${1:-}" == "-f" ]]; then
-        follow_flag="-f"
+        follow_args=(-f)
     fi
 
     ensure_root
@@ -384,26 +528,43 @@ cmd_logs() {
 
     read -r _slot _host_ip local_ip _repo _branch < "$PREVIEW_DIR/$slug"
 
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$local_ip" \
-        "journalctl -u setup-preview -u preview-app --no-pager $follow_flag"
+    local type
+    type=$(get_preview_type "$slug")
+
+    local -a units
+    if [[ "$type" == "vertex" ]]; then
+        units=(-u setup-vertex -u vertex-backend -u vertex-frontend-admin -u vertex-frontend-foods)
+    else
+        units=(-u setup-preview -u preview-app)
+    fi
+
+    nixos-container run "$slug" -- journalctl "${units[@]}" --no-pager "${follow_args[@]}"
 }
 
 cmd_help() {
     echo -e "${BOLD}Usage:${NC} preview <command> [args]"
     echo ""
     echo -e "${BOLD}Commands:${NC}"
-    echo "  create <owner/repo> <branch> [--slug <slug>]   Deploy a branch as a preview"
+    echo "  create <owner/repo> <branch> [options]          Deploy a branch as a preview"
+    echo "    --slug <slug>                                 Custom slug for the preview URL"
+    echo "    --type <node|vertex>                          Preview type (default: node)"
     echo "  destroy <slug>                                  Remove a preview deployment"
     echo "  update <slug>                                   Pull latest code and rebuild"
     echo "  list                                            List all preview deployments"
     echo "  logs <slug> [--follow]                          View preview build/app logs"
-    echo "  build                                           Pre-build the preview system closure"
+    echo "  build [--type <node|vertex>]                    Pre-build the preview system closure"
     echo "  help                                            Show this help"
+    echo ""
+    echo -e "${BOLD}Preview types:${NC}"
+    echo "  node     Node.js app (npm ci, npm build, npm start on port 3000)"
+    echo "  vertex   Elixir/Phoenix + React SPA monorepo (backend:4000, frontends:3000/3001)"
     echo ""
     echo -e "${BOLD}Examples:${NC}"
     echo "  preview build"
+    echo "  preview build --type vertex"
     echo "  preview create myorg/myapp feature-branch"
     echo "  preview create myorg/myapp feature-branch --slug myapp-pr-42"
+    echo "  preview create lambdaclass/vertex feature-branch --type vertex --slug vtx-pr-42"
     echo "  preview logs myapp-pr-42 --follow"
     echo "  preview update myapp-pr-42"
     echo "  preview destroy myapp-pr-42"
@@ -419,7 +580,7 @@ case "$command" in
     update)  cmd_update "$@" ;;
     list)    cmd_list ;;
     logs)    cmd_logs "$@" ;;
-    build)   cmd_build ;;
+    build)   cmd_build "$@" ;;
     help|--help|-h) cmd_help ;;
     *)       fatal "Unknown command: $command. Run 'preview help' for usage." ;;
 esac

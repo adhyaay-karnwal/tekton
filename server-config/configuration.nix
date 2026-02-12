@@ -132,6 +132,9 @@
   # Firewall: allow HTTP, HTTPS, and webhook port
   networking.firewall.allowedTCPPorts = [ 80 3100 ];
 
+  # Trust container veth interfaces (allows containers to reach host PostgreSQL, etc.)
+  networking.firewall.trustedInterfaces = [ "ve-+" ];
+
   # GitHub PR Preview Webhook service
   systemd.services.preview-webhook = {
     description = "GitHub PR Preview Webhook";

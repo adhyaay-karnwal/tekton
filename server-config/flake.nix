@@ -37,5 +37,14 @@
         ./preview-config.nix
       ];
     };
+
+    # Vertex preview container configuration (Elixir/Phoenix + React SPA)
+    nixosConfigurations.vertex-preview = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        { nixpkgs.pkgs = pkgs; }
+        ./vertex-preview-config.nix
+      ];
+    };
   };
 }

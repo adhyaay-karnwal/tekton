@@ -274,17 +274,20 @@ install_nixos() {
 
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local work_dir="$script_dir/initial-install"
-    local config_file="$work_dir/configuration.nix"
-    local backup_file
-    backup_file=$(mktemp)
+    local source_dir="$script_dir/initial-install"
 
-    # Create backup (outside the flake directory so nix evaluation can't interfere)
-    cp "$config_file" "$backup_file"
+    # Copy to a temp directory OUTSIDE the git repo so Nix evaluates the
+    # filesystem directly instead of using git-based source resolution
+    # (which may not pick up in-place sed modifications reliably).
+    local work_dir
+    work_dir=$(mktemp -d)
+    cp -a "$source_dir"/. "$work_dir/"
+
+    local config_file="$work_dir/configuration.nix"
 
     info "Substituting values in initial-install/configuration.nix..."
 
-    # Perform substitutions
+    # Perform substitutions on the temp copy
     sed -i.tmp "s|YOUR.SERVER.IP.HERE|$SERVER_IP|g" "$config_file"
     sed -i.tmp "s|YOUR.GATEWAY.IP.HERE|$GATEWAY|g" "$config_file"
     sed -i.tmp "s|ssh-ed25519 AAAA... your-key-here|$SSH_KEY|g" "$config_file"
@@ -310,13 +313,11 @@ install_nixos() {
     if ! (cd "$work_dir" && nix run github:nix-community/nixos-anywhere/1.13.0 -- \
         --flake '.#hetzner-dedicated' \
         root@"$SERVER_IP"); then
-        # Restore backup on failure
-        mv "$backup_file" "$config_file"
-        fatal "nixos-anywhere failed. Configuration file has been restored."
+        rm -rf "$work_dir"
+        fatal "nixos-anywhere failed."
     fi
 
-    # Restore original file (we don't want to leave secrets in the repo)
-    mv "$backup_file" "$config_file"
+    rm -rf "$work_dir"
 
     success "nixos-anywhere completed."
     info "Waiting for server to come back online..."
@@ -373,6 +374,13 @@ configure_server() {
     local preview_cfg="$tmp_dir/preview-config.nix"
     sed -i.tmp "s|ssh-ed25519 AAAA... your-key-here|$SSH_KEY|g" "$preview_cfg"
     rm -f "$preview_cfg.tmp"
+
+    # --- vertex-preview-config.nix ---
+    local vertex_cfg="$tmp_dir/vertex-preview-config.nix"
+    if [[ -f "$vertex_cfg" ]]; then
+        sed -i.tmp "s|ssh-ed25519 AAAA... your-key-here|$SSH_KEY|g" "$vertex_cfg"
+        rm -f "$vertex_cfg.tmp"
+    fi
 
     # --- configuration.nix: substitute preview domain ---
     if [[ "$SETUP_PREVIEWS" == "y" ]]; then
@@ -463,6 +471,13 @@ chmod 600 /var/secrets/preview.env"
         info "Pre-building preview container closure..."
         ssh $ssh_opts root@"$SERVER_IP" "preview build" || {
             warn "Preview pre-build failed. The first 'preview create' will build it automatically."
+        }
+    fi
+
+    if [[ "$SETUP_VERTEX" == "y" ]]; then
+        info "Pre-building vertex preview container closure (this may take a while)..."
+        ssh $ssh_opts root@"$SERVER_IP" "preview build --type vertex" || {
+            warn "Vertex pre-build failed. The first 'preview create --type vertex' will build it automatically."
         }
     fi
 
@@ -557,13 +572,27 @@ print_summary() {
 }
 
 # -- Main ---------------------------------------------------------------------
+SETUP_VERTEX="n"
+
 main() {
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --vertex) SETUP_VERTEX="y"; shift ;;
+            *) fatal "Unknown argument: $1" ;;
+        esac
+    done
+
     echo -e "${BOLD}${CYAN}"
     echo "  ╔══════════════════════════════════════════════════════════╗"
     echo "  ║   NixOS Setup for Claude Code Agents                   ║"
     echo "  ║   Hetzner Dedicated Server                             ║"
     echo "  ╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+
+    if [[ "$SETUP_VERTEX" == "y" ]]; then
+        info "Vertex preview support enabled."
+    fi
 
     check_prerequisites
     gather_info

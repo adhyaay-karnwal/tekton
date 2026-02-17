@@ -2,10 +2,8 @@ import { execaCommand } from "execa";
 
 const PREVIEW_BIN = "/run/current-system/sw/bin/preview";
 
-export function prToSlug(repoName: string, prNumber: number): string {
-  // Keep slug short and no dashes — nixos-container names disallow dashes
-  const shortName = repoName.length > 6 ? repoName.slice(0, 6) : repoName;
-  return `${shortName}${prNumber}`;
+export function prToSlug(_repoName: string, prNumber: number): string {
+  return `${prNumber}`;
 }
 
 async function runPreview(args: string): Promise<void> {

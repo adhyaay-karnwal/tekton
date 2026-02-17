@@ -38,18 +38,55 @@ export async function destroyPreview(slug: string): Promise<void> {
   await runPreview(`destroy ${slug}`);
 }
 
-export async function postPRComment(
+const PREVIEW_LINK_MARKER = "<!-- preview-link -->";
+
+export async function addPreviewLinkToPR(
   repo: string,
   prNumber: number,
-  body: string
+  previewUrl: string,
+  token: string
 ): Promise<void> {
-  console.log(`[preview] Posting comment on ${repo}#${prNumber}`);
+  console.log(`[preview] Adding preview link to ${repo}#${prNumber}`);
   try {
-    await execaCommand(
-      `/run/current-system/sw/bin/gh pr comment ${prNumber} --repo ${repo} --body "${body.replace(/"/g, '\\"')}"`,
-      { timeout: 30_000 }
-    );
+    // Get current PR body
+    const getRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!getRes.ok) {
+      console.error(`[preview] Failed to get PR: ${getRes.status}`);
+      return;
+    }
+    const pr = await getRes.json() as { body: string | null };
+    let body = pr.body ?? "";
+
+    // Remove existing preview link if present
+    const markerIdx = body.indexOf(PREVIEW_LINK_MARKER);
+    if (markerIdx !== -1) {
+      body = body.slice(0, markerIdx).trimEnd();
+    }
+
+    // Append preview link
+    body += `\n\n${PREVIEW_LINK_MARKER}\n---\n**Preview:** ${previewUrl}`;
+
+    // Update PR
+    const patchRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body }),
+    });
+    if (!patchRes.ok) {
+      console.error(`[preview] Failed to update PR: ${patchRes.status}`);
+      return;
+    }
+    console.log(`[preview] Added preview link to ${repo}#${prNumber}`);
   } catch (error) {
-    console.error(`[preview] Failed to post PR comment:`, error);
+    console.error(`[preview] Failed to add preview link:`, error);
   }
 }

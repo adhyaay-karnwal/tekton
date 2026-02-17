@@ -6,7 +6,7 @@ import {
   createPreview,
   updatePreview,
   destroyPreview,
-  postPRComment,
+  addPreviewLinkToPR,
 } from "./preview.js";
 
 async function main(): Promise<void> {
@@ -89,11 +89,7 @@ async function main(): Promise<void> {
           case "reopened": {
             await createPreview(repo, branch, slug, type);
             const url = `https://${slug}.${config.previewDomain}`;
-            await postPRComment(
-              repo,
-              prNumber,
-              `Preview deployment is building.\n\nURL: ${url}\n\nCheck build progress on the server with: \`preview logs ${slug} --follow\``
-            );
+            await addPreviewLinkToPR(repo, prNumber, url, config.githubToken);
             break;
           }
           case "synchronize": {

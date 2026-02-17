@@ -72,12 +72,14 @@ async function main(): Promise<void> {
       return reply.code(200).send({ status: "ignored", reason: "not_allowed" });
     }
 
+    const type = config.vertexRepos.includes(repo) ? "vertex" : "node";
+
     console.log(
-      `[webhook] PR #${prNumber} ${event.action} on ${repo} (branch: ${branch})`
+      `[webhook] PR #${prNumber} ${event.action} on ${repo} (branch: ${branch}, type: ${type})`
     );
 
     // Respond 202 immediately, process in background
-    void reply.code(202).send({ status: "accepted", slug });
+    void reply.code(202).send({ status: "accepted", slug, type });
 
     // Process asynchronously
     setImmediate(async () => {
@@ -85,7 +87,7 @@ async function main(): Promise<void> {
         switch (event.action) {
           case "opened":
           case "reopened": {
-            await createPreview(repo, branch, slug);
+            await createPreview(repo, branch, slug, type);
             const url = `https://${slug}.${config.previewDomain}`;
             await postPRComment(
               repo,

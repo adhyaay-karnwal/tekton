@@ -19,4 +19,8 @@ export const config = {
     .split(",")
     .map((r) => r.trim())
     .filter(Boolean),
+  vertexRepos: optionalEnv("VERTEX_REPOS", "")
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean),
 } as const;

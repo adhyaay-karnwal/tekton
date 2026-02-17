@@ -94,18 +94,12 @@
     '';
   };
 
-  # Caddy reverse proxy for preview deployments (plain HTTP)
+  # Caddy reverse proxy for preview deployments (auto HTTPS via Let's Encrypt)
   services.caddy = {
     enable = true;
-    globalConfig = ''
-      auto_https off
+    extraConfig = ''
+      import /etc/caddy/previews/*.caddy
     '';
-    virtualHosts."http://*.preview.DOMAIN" = {
-      extraConfig = ''
-        import /etc/caddy/previews/*
-        respond "Preview not found" 404
-      '';
-    };
   };
 
   environment.systemPackages = with pkgs; [
@@ -124,13 +118,13 @@
     })
     (pkgs.writeShellApplication {
       name = "preview";
-      runtimeInputs = [ nixos-container openssh curl jq postgresql ];
+      runtimeInputs = [ coreutils gnused nixos-container openssh curl jq postgresql sudo ];
       text = builtins.readFile ./preview.sh;
     })
   ];
 
   # Firewall: allow HTTP, HTTPS, and webhook port
-  networking.firewall.allowedTCPPorts = [ 80 3100 ];
+  networking.firewall.allowedTCPPorts = [ 80 443 3100 ];
 
   # Trust container veth interfaces (allows containers to reach host PostgreSQL, etc.)
   networking.firewall.trustedInterfaces = [ "ve-+" ];
@@ -142,6 +136,7 @@
     after = [ "network.target" "caddy.service" "postgresql.service" ];
     serviceConfig = {
       Type = "simple";
+      Environment = "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin";
       ExecStart = "${pkgs.nodejs_22}/bin/node /opt/preview-webhook/dist/index.js";
       Restart = "always";
       RestartSec = 5;

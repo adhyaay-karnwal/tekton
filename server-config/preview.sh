@@ -147,8 +147,7 @@ write_caddy_route() {
     local domain="${PREVIEW_DOMAIN:-preview.example.com}"
 
     cat > "${CADDY_DIR}/${slug}.caddy" <<EOF
-@${slug} host ${slug}.${domain}
-handle @${slug} {
+${slug}.${domain} {
     reverse_proxy ${container_ip}:3000
 }
 EOF
@@ -168,8 +167,7 @@ write_vertex_caddy_route() {
     local domain="${PREVIEW_DOMAIN:-preview.example.com}"
 
     cat > "${CADDY_DIR}/${slug}.caddy" <<EOF
-@${slug} host ${slug}.${domain}
-handle @${slug} {
+${slug}.${domain} {
     handle /api/* {
         reverse_proxy ${container_ip}:4000
     }
@@ -339,7 +337,7 @@ cmd_create() {
     mkdir -p "$(dirname "$env_file")"
 
     local clone_url="https://x-access-token:${github_token}@github.com/${repo}.git"
-    local preview_url="http://${slug}.${domain}"
+    local preview_url="https://${slug}.${domain}"
 
     if [[ "$type" == "vertex" ]]; then
         # Generate secrets for vertex
@@ -499,7 +497,7 @@ cmd_list() {
             status="${YELLOW}stopped${NC}"
         fi
 
-        local url="http://${name}.${domain}"
+        local url="https://${name}.${domain}"
         printf "%-19s %-23b %-31s %s\n" "$name" "$status" "$branch" "$url"
     done
 

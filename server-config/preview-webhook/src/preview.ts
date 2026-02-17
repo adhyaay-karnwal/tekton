@@ -1,14 +1,18 @@
 import { execaCommand } from "execa";
 
+const PREVIEW_BIN = "/run/current-system/sw/bin/preview";
+
 export function prToSlug(repoName: string, prNumber: number): string {
-  return `${repoName}-pr-${prNumber}`;
+  // Keep slug short and no dashes — nixos-container names disallow dashes
+  const shortName = repoName.length > 6 ? repoName.slice(0, 6) : repoName;
+  return `${shortName}${prNumber}`;
 }
 
 async function runPreview(args: string): Promise<void> {
-  console.log(`[preview] Running: preview ${args}`);
+  console.log(`[preview] Running: ${PREVIEW_BIN} ${args}`);
   try {
-    const { stdout, stderr } = await execaCommand(`preview ${args}`, {
-      timeout: 600_000, // 10 minute timeout for builds
+    const { stdout, stderr } = await execaCommand(`${PREVIEW_BIN} ${args}`, {
+      timeout: 1_200_000, // 20 minute timeout for builds (vertex/Elixir can be slow)
     });
     if (stdout) console.log(`[preview] stdout: ${stdout}`);
     if (stderr) console.log(`[preview] stderr: ${stderr}`);
@@ -21,9 +25,11 @@ async function runPreview(args: string): Promise<void> {
 export async function createPreview(
   repo: string,
   branch: string,
-  slug: string
+  slug: string,
+  type: string = "node"
 ): Promise<void> {
-  await runPreview(`create ${repo} ${branch} --slug ${slug}`);
+  const typeFlag = type !== "node" ? ` --type ${type}` : "";
+  await runPreview(`create ${repo} ${branch} --slug ${slug}${typeFlag}`);
 }
 
 export async function updatePreview(slug: string): Promise<void> {
@@ -42,7 +48,7 @@ export async function postPRComment(
   console.log(`[preview] Posting comment on ${repo}#${prNumber}`);
   try {
     await execaCommand(
-      `gh pr comment ${prNumber} --repo ${repo} --body "${body.replace(/"/g, '\\"')}"`,
+      `/run/current-system/sw/bin/gh pr comment ${prNumber} --repo ${repo} --body "${body.replace(/"/g, '\\"')}"`,
       { timeout: 30_000 }
     );
   } catch (error) {

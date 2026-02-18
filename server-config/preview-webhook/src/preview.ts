@@ -59,14 +59,15 @@ export async function addPreviewLinkToPR(
   repo: string,
   prNumber: number,
   previewUrl: string,
-  token: string
+  token: string,
+  landingUrl?: string
 ): Promise<void> {
   console.log(`[preview] Adding preview link to ${repo}#${prNumber}`);
   try {
     const body = await getPRBody(repo, prNumber, token);
     if (body === null) return;
 
-    const newBody = appendPreviewLink(body, previewUrl);
+    const newBody = appendPreviewLink(body, previewUrl, landingUrl);
     await patchPRBody(repo, prNumber, newBody, token);
     console.log(`[preview] Added preview link to ${repo}#${prNumber}`);
   } catch (error) {
@@ -113,13 +114,17 @@ async function getPRBody(repo: string, prNumber: number, token: string): Promise
   return pr.body ?? "";
 }
 
-function appendPreviewLink(body: string, previewUrl: string): string {
+function appendPreviewLink(body: string, previewUrl: string, landingUrl?: string): string {
   // Remove existing preview link if present
   const markerIdx = body.indexOf(PREVIEW_LINK_MARKER);
   if (markerIdx !== -1) {
     body = body.slice(0, markerIdx).trimEnd();
   }
-  return body + `\n\n${PREVIEW_LINK_MARKER}\n---\n**Preview:** ${previewUrl}`;
+  let link = `\n\n${PREVIEW_LINK_MARKER}\n---\n**Preview:** ${previewUrl}`;
+  if (landingUrl) {
+    link += `\n**Landing:** ${landingUrl}`;
+  }
+  return body + link;
 }
 
 async function patchPRBody(repo: string, prNumber: number, body: string, token: string): Promise<void> {

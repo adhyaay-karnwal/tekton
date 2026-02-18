@@ -95,7 +95,12 @@ async function main(): Promise<void> {
             await createPreview(repo, branch, slug, type);
             activePreviews.add(slug);
             const url = `https://${slug}.${config.previewDomain}`;
-            await addPreviewLinkToPR(repo, prNumber, url, config.githubToken);
+            if (type === "vertex") {
+              const landingUrl = `https://landing-${slug}.${config.previewDomain}`;
+              await addPreviewLinkToPR(repo, prNumber, url, config.githubToken, landingUrl);
+            } else {
+              await addPreviewLinkToPR(repo, prNumber, url, config.githubToken);
+            }
             break;
           }
           case "synchronize": {

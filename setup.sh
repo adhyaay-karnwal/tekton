@@ -155,7 +155,7 @@ gather_info() {
 
     local ssh_opts="$SSH_IDENTITY_OPT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR"
 
-    if ! ssh $ssh_opts root@"$SERVER_IP" true 2>/dev/null; then
+    if ! ssh $ssh_opts root@"$SERVER_IP" true; then
         fatal "Cannot SSH into rescue mode at root@$SERVER_IP. Is rescue mode active?"
     fi
     success "SSH connection to rescue mode successful."
@@ -419,7 +419,7 @@ install_nixos() {
     local max_attempts=60
 
     while (( attempts < max_attempts )); do
-        if ssh $ssh_opts root@"$SERVER_IP" true 2>/dev/null; then
+        if ssh $ssh_opts root@"$SERVER_IP" true; then
             success "Server is back online!"
             return
         fi

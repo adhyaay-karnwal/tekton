@@ -189,6 +189,19 @@ EOF
 landing-${slug}.${domain} {
     reverse_proxy ${container_ip}:3002
 }
+
+app.landing-${slug}.${domain} {
+    handle /api/* {
+        reverse_proxy ${container_ip}:4000
+    }
+    handle /websocket {
+        reverse_proxy ${container_ip}:4000
+    }
+    handle /longpoll/* {
+        reverse_proxy ${container_ip}:4000
+    }
+    reverse_proxy ${container_ip}:3001
+}
 EOF
 
     systemctl reload caddy
@@ -383,7 +396,7 @@ GOOGLE_CLIENT_ID='${google_client_id}'
 GOOGLE_CLIENT_SECRET='${google_client_secret}'
 REDIS_URL='redis://localhost:6379'
 DEPLOY_ENV='testing'
-CORS_ALLOWED_ORIGINS='${preview_url}'
+CORS_ALLOWED_ORIGINS='${preview_url},https://app.landing-${slug}.${domain}'
 EOF
     else
         cat > "$env_file" <<EOF

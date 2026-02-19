@@ -20,6 +20,21 @@ async function runPreview(args: string): Promise<void> {
   }
 }
 
+export async function listActiveSlugs(): Promise<string[]> {
+  try {
+    const { stdout } = await execaCommand(`${PREVIEW_BIN} list`, { timeout: 10_000 });
+    // Parse slugs from the first column of each line (skip header)
+    return stdout
+      .split("\n")
+      .slice(1)
+      .map((line) => line.trim().split(/\s+/)[0])
+      .filter(Boolean);
+  } catch (error) {
+    console.error(`[preview] Failed to list active slugs:`, error);
+    return [];
+  }
+}
+
 export async function createPreview(
   repo: string,
   branch: string,
@@ -48,45 +63,76 @@ export async function addPreviewLinkToPR(
 ): Promise<void> {
   console.log(`[preview] Adding preview link to ${repo}#${prNumber}`);
   try {
-    // Get current PR body
-    const getRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
-    });
-    if (!getRes.ok) {
-      console.error(`[preview] Failed to get PR: ${getRes.status}`);
-      return;
-    }
-    const pr = await getRes.json() as { body: string | null };
-    let body = pr.body ?? "";
+    const body = await getPRBody(repo, prNumber, token);
+    if (body === null) return;
 
-    // Remove existing preview link if present
-    const markerIdx = body.indexOf(PREVIEW_LINK_MARKER);
-    if (markerIdx !== -1) {
-      body = body.slice(0, markerIdx).trimEnd();
-    }
-
-    // Append preview link
-    body += `\n\n${PREVIEW_LINK_MARKER}\n---\n**Preview:** ${previewUrl}`;
-
-    // Update PR
-    const patchRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ body }),
-    });
-    if (!patchRes.ok) {
-      console.error(`[preview] Failed to update PR: ${patchRes.status}`);
-      return;
-    }
+    const newBody = appendPreviewLink(body, previewUrl);
+    await patchPRBody(repo, prNumber, newBody, token);
     console.log(`[preview] Added preview link to ${repo}#${prNumber}`);
   } catch (error) {
     console.error(`[preview] Failed to add preview link:`, error);
+  }
+}
+
+export async function ensurePreviewLinkOnPR(
+  repo: string,
+  prNumber: number,
+  slug: string,
+  previewDomain: string,
+  token: string
+): Promise<void> {
+  try {
+    const body = await getPRBody(repo, prNumber, token);
+    if (body === null) return;
+
+    // Already has the preview link, nothing to do
+    if (body.includes(PREVIEW_LINK_MARKER)) return;
+
+    const previewUrl = `https://${slug}.${previewDomain}`;
+    console.log(`[preview] Re-adding missing preview link to ${repo}#${prNumber}`);
+    const newBody = appendPreviewLink(body, previewUrl);
+    await patchPRBody(repo, prNumber, newBody, token);
+    console.log(`[preview] Re-added preview link to ${repo}#${prNumber}`);
+  } catch (error) {
+    console.error(`[preview] Failed to ensure preview link:`, error);
+  }
+}
+
+async function getPRBody(repo: string, prNumber: number, token: string): Promise<string | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (!res.ok) {
+    console.error(`[preview] Failed to get PR: ${res.status}`);
+    return null;
+  }
+  const pr = await res.json() as { body: string | null };
+  return pr.body ?? "";
+}
+
+function appendPreviewLink(body: string, previewUrl: string): string {
+  // Remove existing preview link if present
+  const markerIdx = body.indexOf(PREVIEW_LINK_MARKER);
+  if (markerIdx !== -1) {
+    body = body.slice(0, markerIdx).trimEnd();
+  }
+  return body + `\n\n${PREVIEW_LINK_MARKER}\n---\n**Preview:** ${previewUrl}`;
+}
+
+async function patchPRBody(repo: string, prNumber: number, body: string, token: string): Promise<void> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    console.error(`[preview] Failed to update PR: ${res.status}`);
   }
 }

@@ -7,7 +7,12 @@ import {
   updatePreview,
   destroyPreview,
   addPreviewLinkToPR,
+  ensurePreviewLinkOnPR,
+  listActiveSlugs,
 } from "./preview.js";
+
+// Track active preview slugs so we can re-add links on PR body edits
+const activePreviews = new Set<string>();
 
 async function main(): Promise<void> {
   console.log("Starting preview webhook server...");
@@ -88,6 +93,7 @@ async function main(): Promise<void> {
           case "opened":
           case "reopened": {
             await createPreview(repo, branch, slug, type);
+            activePreviews.add(slug);
             const url = `https://${slug}.${config.previewDomain}`;
             await addPreviewLinkToPR(repo, prNumber, url, config.githubToken);
             break;
@@ -96,7 +102,14 @@ async function main(): Promise<void> {
             await updatePreview(slug);
             break;
           }
+          case "edited": {
+            if (activePreviews.has(slug)) {
+              await ensurePreviewLinkOnPR(repo, prNumber, slug, config.previewDomain, config.githubToken);
+            }
+            break;
+          }
           case "closed": {
+            activePreviews.delete(slug);
             await destroyPreview(slug);
             break;
           }
@@ -111,6 +124,15 @@ async function main(): Promise<void> {
       }
     });
   });
+
+  // Populate active previews from existing containers on startup
+  const existingSlugs = await listActiveSlugs();
+  for (const slug of existingSlugs) {
+    activePreviews.add(slug);
+  }
+  if (existingSlugs.length > 0) {
+    console.log(`[preview] Loaded ${existingSlugs.length} active previews: ${existingSlugs.join(", ")}`);
+  }
 
   await fastify.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`Webhook server listening on http://0.0.0.0:${config.port}`);

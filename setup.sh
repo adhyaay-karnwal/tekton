@@ -717,12 +717,14 @@ print_summary() {
 
 # -- Main ---------------------------------------------------------------------
 SETUP_VERTEX="n"
+SKIP_INSTALL="n"
 
 main() {
     # Parse flags
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --vertex) SETUP_VERTEX="y"; shift ;;
+            --skip-install) SKIP_INSTALL="y"; shift ;;
             *) fatal "Unknown argument: $1" ;;
         esac
     done
@@ -740,7 +742,11 @@ main() {
 
     check_prerequisites
     gather_info
-    install_nixos
+    if [[ "$SKIP_INSTALL" == "y" ]]; then
+        info "Skipping NixOS installation (--skip-install)."
+    else
+        install_nixos
+    fi
     configure_server
     setup_claude
     print_summary

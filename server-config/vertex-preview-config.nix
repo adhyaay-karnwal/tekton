@@ -82,6 +82,15 @@ in
 
       APP_DIR="/home/preview/app"
 
+      # On container restart, skip setup entirely if the app is already built.
+      # This avoids git fetch with expired GitHub App tokens.
+      # Explicit rebuilds go through 'preview update' which clears the marker.
+      if [ -d "$APP_DIR/.git" ] && [ -f "$APP_DIR/backend/_build/prod/rel/vertex/bin/vertex" ] && [ ! -f /tmp/force-rebuild ]; then
+        echo "App already built, skipping setup (container restart)."
+        exit 0
+      fi
+      rm -f /tmp/force-rebuild
+
       if [ -d "$APP_DIR/.git" ]; then
         echo "Updating existing repo..."
         cd "$APP_DIR"

@@ -513,6 +513,33 @@ cmd_update() {
 
     info "Updating preview '$slug' (type=$type, pulling latest code and rebuilding)..."
 
+    # Refresh the GitHub token in the container's git config (GitHub App tokens expire after ~1 hour)
+    local github_token=""
+    local webhook_port="${WEBHOOK_PORT:-3100}"
+    local token_response
+    if token_response=$(curl -sf "http://127.0.0.1:${webhook_port}/internal/token" 2>/dev/null); then
+        github_token=$(echo "$token_response" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    else
+        github_token="${GITHUB_TOKEN:-}"
+    fi
+
+    if [[ -n "$github_token" ]]; then
+        local container_root="/var/lib/nixos-containers/${slug}"
+        # Update git remote URL with fresh token
+        local git_config="${container_root}/home/preview/app/.git/config"
+        if [[ -f "$git_config" ]]; then
+            sed -i "s|x-access-token:[^@]*|x-access-token:${github_token}|" "$git_config"
+        fi
+        # Update PREVIEW_REPO_URL in container env file
+        local env_file="${container_root}/etc/preview.env"
+        if [[ -f "$env_file" ]]; then
+            sed -i "s|x-access-token:[^@]*|x-access-token:${github_token}|" "$env_file"
+        fi
+    fi
+
+    # Signal the setup service to do a full rebuild (not skip due to existing build)
+    nixos-container run "$slug" -- touch /tmp/force-rebuild
+
     if [[ "$type" == "vertex" ]]; then
         nixos-container run "$slug" -- bash -c \
             "systemctl restart setup-vertex && systemctl restart vertex-backend vertex-frontend-admin vertex-frontend-foods vertex-frontend-landing"

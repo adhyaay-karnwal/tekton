@@ -596,12 +596,11 @@ configure_server() {
 
         ssh $ssh_opts root@"$SERVER_IP" "mkdir -p /var/lib/preview-deploys /etc/caddy/previews /opt/preview-webhook"
 
-        # Deploy Cloudflare Origin CA certificate and key
+        # Deploy Cloudflare Origin CA certificate and key (permissions fixed after nixos-rebuild creates caddy group)
         info "Uploading Cloudflare Origin CA certificate and key..."
         scp $ssh_opts "$ORIGIN_CERT_PATH" root@"$SERVER_IP":/var/secrets/cloudflare-origin.pem
         scp $ssh_opts "$ORIGIN_KEY_PATH" root@"$SERVER_IP":/var/secrets/cloudflare-origin-key.pem
-        ssh $ssh_opts root@"$SERVER_IP" "chown root:caddy /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem && chmod 640 /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem"
-        success "Origin CA certificate deployed."
+        success "Origin CA certificate uploaded."
 
         # Create webhook Caddy route for HTTPS (with Cloudflare Origin CA)
         ssh $ssh_opts root@"$SERVER_IP" "echo 'webhook.${PREVIEW_DOMAIN} {
@@ -682,6 +681,10 @@ chmod 600 /var/secrets/preview.env"
     success "Server configured with agent container support."
 
     if [[ "$SETUP_PREVIEWS" == "y" ]]; then
+        # Fix Origin CA cert permissions now that nixos-rebuild created the caddy group
+        info "Setting Origin CA certificate permissions..."
+        ssh $ssh_opts root@"$SERVER_IP" "chown root:caddy /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem && chmod 640 /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem"
+
         info "Building preview webhook service..."
         ssh $ssh_opts root@"$SERVER_IP" "cd /opt/preview-webhook && npm ci && npm run build"
         success "Preview webhook service deployed."

@@ -58,34 +58,57 @@ The script runs through 4 phases:
 - Runs `claude login` on the server interactively (you'll see an OAuth URL to open in your browser)
 - Sets file permissions so credentials can be copied into agent containers
 
-## Step 3: Post-Setup
+## Step 3: Cloudflare Setup
 
-### DNS Configuration
+The preview system uses Cloudflare as a reverse proxy with Origin CA certificates for TLS. This avoids Let's Encrypt rate limits (which cap at 50 certs/week per domain) and provides DDoS protection.
 
-If you enabled previews, set up DNS in Cloudflare (orange-cloud **proxied**):
+### 3a. Add Your Domain to Cloudflare
 
-| Record | Type | Value | Proxy |
-|--------|------|-------|-------|
-| `*.preview.example.com` | A | `YOUR_SERVER_IP` | Proxied |
-| `preview.example.com` | A | `YOUR_SERVER_IP` | Proxied |
+1. Create a [Cloudflare account](https://dash.cloudflare.com/sign-up) if you don't have one
+2. Click **Add a site** and enter your domain (e.g., `example.com`)
+3. Select the **Free** plan
+4. Cloudflare will scan your existing DNS records — review and confirm
+5. Cloudflare will give you two nameservers (e.g., `anna.ns.cloudflare.com`, `bob.ns.cloudflare.com`)
+6. Go to your domain registrar and **replace your current nameservers** with the Cloudflare ones
+7. Back in Cloudflare, click **Done, check nameservers**
 
-**Important**: Both records must be **proxied** (orange cloud) in Cloudflare. The server uses a Cloudflare Origin CA wildcard certificate, which is only trusted when traffic goes through Cloudflare's proxy.
+Nameserver propagation can take up to 24 hours, but usually completes within minutes. Cloudflare will email you when the domain is active.
 
-### TLS: Cloudflare Origin CA
+### 3b. Set SSL/TLS Mode to Full (strict)
 
-TLS is handled by a single Cloudflare Origin CA wildcard certificate (`*.preview.example.com`), avoiding Let's Encrypt rate limits. The setup script prompts for the cert and key paths and deploys them to `/var/secrets/` on the server.
+**This is critical** — without this, preview URLs will show `NET::ERR_CERT_AUTHORITY_INVALID` in the browser.
 
-To generate an Origin CA certificate:
+1. Go to **Cloudflare Dashboard > your domain > SSL/TLS > Overview**
+2. Set the encryption mode to **Full (strict)**
+
+Origin CA certificates are only trusted by Cloudflare's proxy, not by browsers directly. "Full (strict)" ensures Cloudflare validates the Origin CA cert on the server and presents its own trusted certificate to browsers.
+
+### 3c. Generate an Origin CA Certificate
+
 1. Go to **Cloudflare Dashboard > your domain > SSL/TLS > Origin Server**
 2. Click **Create Certificate**
-3. Keep the default RSA key type
-4. Add hostnames: `*.preview.example.com` and `preview.example.com`
-5. Choose validity (15 years recommended)
-6. Save both the certificate and private key as `.pem` files
+3. Keep the default key type (RSA)
+4. Set hostnames to: `*.preview.example.com` and `preview.example.com`
+5. Choose validity period (15 years recommended)
+6. Click **Create**
+7. **Important**: You will see two text boxes — the **Origin Certificate** and the **Private Key**. Copy each one and save them as separate `.pem` files (e.g., `origin-cert.pem` and `origin-key.pem`). The private key is only shown once — if you lose it, you'll need to generate a new certificate.
 
-The setup script will upload these to the server at:
+The setup script will prompt for these file paths and upload them to the server at:
 - `/var/secrets/cloudflare-origin.pem` (certificate)
 - `/var/secrets/cloudflare-origin-key.pem` (private key)
+
+### 3d. Configure DNS Records
+
+In Cloudflare DNS, add these records (both must be **Proxied** — orange cloud icon):
+
+| Record | Type | Name | Content | Proxy |
+|--------|------|------|---------|-------|
+| Wildcard | A | `*.preview` | `YOUR_SERVER_IP` | Proxied |
+| Base | A | `preview` | `YOUR_SERVER_IP` | Proxied |
+
+**Important**: Both records must be **proxied** (orange cloud). If set to "DNS only" (grey cloud), browsers will connect directly to your server and reject the Origin CA certificate.
+
+## Step 4: Post-Setup
 
 ### GitHub Webhook
 

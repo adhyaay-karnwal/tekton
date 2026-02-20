@@ -74,12 +74,15 @@ networking.firewall.trustedInterfaces = [ "ve-+" ];
 
 ### DNS and TLS
 
-TLS is handled by a Cloudflare Origin CA wildcard certificate:
-- Wildcard subdomain DNS (`*.preview.example.com`) points to the server IP via **proxied** Cloudflare A records
+TLS is handled by a Cloudflare Origin CA wildcard certificate, with Cloudflare acting as a reverse proxy:
+- Wildcard subdomain DNS (`*.preview.example.com`) points to the server IP via **proxied** (orange cloud) Cloudflare A records
+- Cloudflare SSL/TLS mode must be set to **Full (strict)** — Origin CA certs are only trusted by Cloudflare's proxy, not by browsers directly
 - The Origin CA cert/key are stored at `/var/secrets/cloudflare-origin.pem` and `/var/secrets/cloudflare-origin-key.pem`
 - A Caddy snippet `(cloudflare_tls)` is defined in the global config; each site block imports it
 - Each preview gets a Caddy config file in `/etc/caddy/previews/<slug>.caddy`
 - The main Caddy config imports all files: `import /etc/caddy/previews/*.caddy`
+
+Traffic flow: Browser → Cloudflare (TLS termination with Cloudflare's trusted cert) → Origin server (TLS with Origin CA cert, validated by Cloudflare)
 
 ## Request Flow
 

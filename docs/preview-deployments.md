@@ -184,6 +184,15 @@ Optional overrides from host secrets: `VERTEX_POSTMARK_API_KEY`, `VERTEX_GOOGLE_
 
 ## Troubleshooting
 
+### Browser shows `NET::ERR_CERT_AUTHORITY_INVALID`
+
+The browser is connecting directly to the server and seeing the Cloudflare Origin CA certificate, which is not trusted by browsers. This means traffic is not going through Cloudflare's proxy. Check:
+
+1. **SSL/TLS mode**: In Cloudflare Dashboard > SSL/TLS > Overview, ensure it's set to **Full (strict)**, not "Full" or "Flexible"
+2. **DNS proxy status**: In Cloudflare DNS, ensure both `*.preview.example.com` and `preview.example.com` records are set to **Proxied** (orange cloud), not "DNS only" (grey cloud)
+3. **DNS propagation**: If you just added the domain to Cloudflare, nameserver changes can take up to 24 hours to propagate. Check with `dig +short your-slug.preview.example.com` — if it returns your server IP directly (instead of a Cloudflare IP), DNS hasn't propagated yet
+4. **Zone not active**: Cloudflare will email you when your domain is active. Until then, DNS queries may bypass Cloudflare entirely
+
 ### Preview is building but site returns 502
 
 The app is still building. Check build progress:

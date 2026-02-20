@@ -64,7 +64,7 @@ networking.nat = {
 ### Firewall
 
 The host firewall allows:
-- Ports 80 (HTTP, for ACME challenges) and 443 (HTTPS) from the internet
+- Ports 80 (HTTP, for redirects) and 443 (HTTPS) from the internet
 - All traffic from container veth interfaces (`ve-+`) is trusted — this is required for containers to reach host PostgreSQL and other services
 
 ```nix
@@ -74,9 +74,10 @@ networking.firewall.trustedInterfaces = [ "ve-+" ];
 
 ### DNS and TLS
 
-Caddy handles TLS automatically:
-- Wildcard subdomain DNS (`*.preview.example.com`) points to the server IP
-- Caddy gets certificates from Let's Encrypt
+TLS is handled by a Cloudflare Origin CA wildcard certificate:
+- Wildcard subdomain DNS (`*.preview.example.com`) points to the server IP via **proxied** Cloudflare A records
+- The Origin CA cert/key are stored at `/var/secrets/cloudflare-origin.pem` and `/var/secrets/cloudflare-origin-key.pem`
+- A Caddy snippet `(cloudflare_tls)` is defined in the global config; each site block imports it
 - Each preview gets a Caddy config file in `/etc/caddy/previews/<slug>.caddy`
 - The main Caddy config imports all files: `import /etc/caddy/previews/*.caddy`
 

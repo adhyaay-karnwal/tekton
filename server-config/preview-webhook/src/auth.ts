@@ -47,7 +47,7 @@ export class GitHubAppTokenProvider implements TokenProvider {
     const header = { alg: "RS256", typ: "JWT" };
     const payload = {
       iat: now - 60, // 60 seconds in the past to allow for clock drift
-      exp: now + 10 * 60, // 10 minutes
+      exp: now + 5 * 60, // 5 minutes (leave headroom for clock drift; GitHub max is 10)
       iss: this.appId,
     };
 

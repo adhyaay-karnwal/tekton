@@ -385,6 +385,22 @@ gather_info() {
 
         echo -en "${BOLD}Vertex/Elixir repos (comma-separated owner/repo, leave blank for none):${NC} "
         read -r VERTEX_REPOS
+
+        echo ""
+        echo -e "${BOLD}Cloudflare Origin CA Certificate${NC}"
+        echo -e "  A wildcard Origin CA cert avoids Let's Encrypt rate limits."
+        echo -e "  Generate one at: Cloudflare Dashboard > SSL/TLS > Origin Server > Create Certificate"
+        echo -en "${BOLD}Path to Cloudflare Origin CA certificate (.pem):${NC} "
+        read -r ORIGIN_CERT_PATH
+        if [[ -z "$ORIGIN_CERT_PATH" ]] || [[ ! -f "$ORIGIN_CERT_PATH" ]]; then
+            fatal "Origin CA certificate not found: ${ORIGIN_CERT_PATH:-<empty>}"
+        fi
+        echo -en "${BOLD}Path to Cloudflare Origin CA private key (.pem):${NC} "
+        read -r ORIGIN_KEY_PATH
+        if [[ -z "$ORIGIN_KEY_PATH" ]] || [[ ! -f "$ORIGIN_KEY_PATH" ]]; then
+            fatal "Origin CA private key not found: ${ORIGIN_KEY_PATH:-<empty>}"
+        fi
+        success "Origin CA certificate and key found."
     fi
 
     # --- Summary ---
@@ -580,8 +596,16 @@ configure_server() {
 
         ssh $ssh_opts root@"$SERVER_IP" "mkdir -p /var/lib/preview-deploys /etc/caddy/previews /opt/preview-webhook"
 
-        # Create webhook Caddy route for HTTPS
+        # Deploy Cloudflare Origin CA certificate and key
+        info "Uploading Cloudflare Origin CA certificate and key..."
+        scp $ssh_opts "$ORIGIN_CERT_PATH" root@"$SERVER_IP":/var/secrets/cloudflare-origin.pem
+        scp $ssh_opts "$ORIGIN_KEY_PATH" root@"$SERVER_IP":/var/secrets/cloudflare-origin-key.pem
+        ssh $ssh_opts root@"$SERVER_IP" "chown root:caddy /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem && chmod 640 /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem"
+        success "Origin CA certificate deployed."
+
+        # Create webhook Caddy route for HTTPS (with Cloudflare Origin CA)
         ssh $ssh_opts root@"$SERVER_IP" "echo 'webhook.${PREVIEW_DOMAIN} {
+    import cloudflare_tls
     reverse_proxy localhost:3100
 }' > /etc/caddy/previews/webhook.caddy"
 
@@ -765,7 +789,7 @@ print_summary() {
         echo "  ssh root@$SERVER_IP 'preview destroy <slug>'"
         echo ""
         echo -e "  ${BOLD}Webhook URL:${NC}  https://$SERVER_IP:3100/webhook/github"
-        echo -e "  ${BOLD}DNS required:${NC} *.${PREVIEW_DOMAIN} A → $SERVER_IP"
+        echo -e "  ${BOLD}DNS required:${NC} *.${PREVIEW_DOMAIN} A → $SERVER_IP (Cloudflare proxied)"
         echo ""
     fi
 

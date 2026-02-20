@@ -13,7 +13,7 @@ There are two preview types:
 
 Each preview gets:
 - A subdomain: `<slug>.preview.example.com`
-- Auto-provisioned TLS via Caddy + Let's Encrypt
+- TLS via Cloudflare Origin CA wildcard certificate (proxied through Cloudflare)
 - Its own nspawn container with a unique IP on the `10.100.0.0/24` subnet
 
 ## Commands Reference

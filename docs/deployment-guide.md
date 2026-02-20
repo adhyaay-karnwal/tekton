@@ -62,13 +62,30 @@ The script runs through 4 phases:
 
 ### DNS Configuration
 
-If you enabled previews, set up DNS:
+If you enabled previews, set up DNS in Cloudflare (orange-cloud **proxied**):
 
-| Record | Type | Value |
-|--------|------|-------|
-| `*.preview.example.com` | A | `YOUR_SERVER_IP` |
+| Record | Type | Value | Proxy |
+|--------|------|-------|-------|
+| `*.preview.example.com` | A | `YOUR_SERVER_IP` | Proxied |
+| `preview.example.com` | A | `YOUR_SERVER_IP` | Proxied |
 
-Caddy handles TLS certificates automatically via Let's Encrypt.
+**Important**: Both records must be **proxied** (orange cloud) in Cloudflare. The server uses a Cloudflare Origin CA wildcard certificate, which is only trusted when traffic goes through Cloudflare's proxy.
+
+### TLS: Cloudflare Origin CA
+
+TLS is handled by a single Cloudflare Origin CA wildcard certificate (`*.preview.example.com`), avoiding Let's Encrypt rate limits. The setup script prompts for the cert and key paths and deploys them to `/var/secrets/` on the server.
+
+To generate an Origin CA certificate:
+1. Go to **Cloudflare Dashboard > your domain > SSL/TLS > Origin Server**
+2. Click **Create Certificate**
+3. Keep the default RSA key type
+4. Add hostnames: `*.preview.example.com` and `preview.example.com`
+5. Choose validity (15 years recommended)
+6. Save both the certificate and private key as `.pem` files
+
+The setup script will upload these to the server at:
+- `/var/secrets/cloudflare-origin.pem` (certificate)
+- `/var/secrets/cloudflare-origin-key.pem` (private key)
 
 ### GitHub Webhook
 

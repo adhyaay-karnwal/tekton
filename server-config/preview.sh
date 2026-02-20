@@ -148,6 +148,7 @@ write_caddy_route() {
 
     cat > "${CADDY_DIR}/${slug}.caddy" <<EOF
 ${slug}.${domain} {
+    import cloudflare_tls
     reverse_proxy ${container_ip}:3000
 }
 EOF
@@ -168,6 +169,7 @@ write_vertex_caddy_route() {
 
     cat > "${CADDY_DIR}/${slug}.caddy" <<EOF
 ${slug}.${domain} {
+    import cloudflare_tls
     handle /api/* {
         reverse_proxy ${container_ip}:4000
     }
@@ -187,10 +189,12 @@ EOF
 
     cat > "${CADDY_DIR}/${slug}-landing.caddy" <<EOF
 landing-${slug}.${domain} {
+    import cloudflare_tls
     reverse_proxy ${container_ip}:3002
 }
 
 app.landing-${slug}.${domain} {
+    import cloudflare_tls
     handle /api/* {
         reverse_proxy ${container_ip}:4000
     }

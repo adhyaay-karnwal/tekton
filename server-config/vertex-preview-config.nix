@@ -89,7 +89,7 @@ in
         ${pkgs.git}/bin/git reset --hard "origin/$PREVIEW_BRANCH"
       else
         echo "Cloning $PREVIEW_REPO_URL (branch: $PREVIEW_BRANCH)..."
-        ${pkgs.git}/bin/git clone --branch "$PREVIEW_BRANCH" --single-branch "$PREVIEW_REPO_URL" "$APP_DIR"
+        ${pkgs.git}/bin/git clone --depth 1 --branch "$PREVIEW_BRANCH" --single-branch "$PREVIEW_REPO_URL" "$APP_DIR"
         cd "$APP_DIR"
       fi
 

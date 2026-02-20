@@ -94,10 +94,14 @@
     '';
   };
 
-  # Caddy reverse proxy for preview deployments (auto HTTPS via Let's Encrypt)
+  # Caddy reverse proxy for preview deployments (TLS via Cloudflare Origin CA)
   services.caddy = {
     enable = true;
     extraConfig = ''
+      (cloudflare_tls) {
+        tls /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem
+      }
+
       import /etc/caddy/previews/*.caddy
     '';
   };
@@ -123,7 +127,7 @@
     })
   ];
 
-  # Firewall: allow HTTP (ACME challenges) and HTTPS
+  # Firewall: allow HTTP (redirects) and HTTPS
   networking.firewall.allowedTCPPorts = [ 80 443 ];
 
   # Trust container veth interfaces (allows containers to reach host PostgreSQL, etc.)

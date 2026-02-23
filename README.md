@@ -158,6 +158,10 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 
 **Duplicate work detection.** An AI watcher monitors all active and recent prompts across the org in real-time. When someone submits a task that overlaps with something already in progress or recently completed, Tekton flags it: "Alice is already working on something similar in task X" or "This was addressed 2 days ago in PR #123." Prevents two people from unknowingly asking agents to do the same thing, saves compute, and surfaces opportunities to collaborate. Uses embeddings over prompt + repo + file paths for semantic similarity, not just keyword matching.
 
+**Skills and prompt configuration.** Store reusable skill files (system prompts, instructions, constraints) in a private repo or in the database. When creating a task, attach one or more skills to shape how the agent works: "follow our API design guidelines", "use our testing conventions", "write in our house style." Skills are composable and can be scoped per repo, per team, or per task. This is how you encode institutional knowledge into every agent run without repeating yourself.
+
+**Multi-agent tasks.** Some tasks benefit from multiple agents working in parallel on the same problem. Spin up N agents for a single task, each taking a different approach or working on a different part. Compare results, pick the best one, or merge them. Also useful for competitive evaluation: run the same prompt against different models and see which produces better output.
+
 **Local model support.** Beyond cloud APIs, support self-hosted models (Llama, DeepSeek, Qwen, etc.) running on the same infrastructure or a dedicated GPU node. Important for teams that can't send code to external providers, and for cutting costs on simpler tasks that don't need frontier models.
 
 ### P2: Workflow and integrations

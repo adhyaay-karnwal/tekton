@@ -124,25 +124,52 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 
 ## Roadmap
 
+### Roadmap overview
+
+**Now (P0):** Single-node core platform, durable task history, basic access control.  
+**Next (P1):** Scale and collaboration foundations.  
+**Later (P2/P4):** Integrations, workflow automation, observability, and intelligence.
+
+### Glossary (short)
+
+- **Task:** A unit of work with prompts, logs, and outputs.
+- **Thread:** The conversation attached to a task.
+- **Agent:** The runtime inside a container that executes the task.
+- **Preview:** A deployed environment for a PR/branch.
+
+### Foundational dependencies
+
+- **Auth + identity.** Users, orgs, teams.
+- **Data model + storage.** Tasks, threads, logs, artifacts.
+- **Job orchestration.** Queue, scheduling, lifecycle states.
+- **Metrics + audit trail.** Usage, costs, and action history.
+
 ### P0: Core platform (build next)
 
-**Multi-model support.** Each user connects their own API accounts (Claude, ChatGPT, Gemini, etc.) and Tekton auto-detects access based on their email. For overflow or users without keys, a shared pool routes through OpenRouter. Configuration is per-org: which models are available, which is the default, and spending limits per user/team.
-
-**Elastic infrastructure.** You configure a base fleet of bare metal machines and Tekton manages them as a pool. When demand exceeds capacity, it provisions cloud VPS instances (AWS, GCP, Hetzner Cloud, OVH Cloud) and runs NixOS VMs inside them. When demand drops, the elastic nodes are torn down. All declarative in a config file: base fleet size, max elastic nodes, provider credentials, and scaling thresholds.
-
-**Task and prompt persistence.** Every prompt, response, agent action, and conversation thread stored in a database with full history. Nothing is lost when a container is destroyed. Tasks are queryable and searchable across the org. Foundation for agent memory, duplicate detection, org-wide intelligence, and audit logging.
-
-**Conversational threads.** Every task has a conversation thread, like GitHub PR discussions. Anyone on the team can jump into a running task, add follow-up prompts, see the full history, and see every preview URL generated along the way. Every message shows who submitted it. The thread is the source of truth for what was asked, what was done, and what the result was.
-
-**Real-time collaboration.** Everything via WebSockets. When one person sends a follow-up, everyone watching sees it. When the agent writes code, everyone sees the logs stream. Uses Operational Transformation for shared state. Multiple users can be active in the same task simultaneously.
+**P0 must-haves.**
+- **Task and prompt persistence.** Every prompt, response, agent action, and conversation thread stored in a database with full history. Nothing is lost when a container is destroyed. Tasks are queryable and searchable across the org.
+- **Security and access control.** RBAC for teams and orgs: who can create tasks, which repos they can target, who can approve plans, who can see costs. Secret management for agent credentials (database passwords, API keys, service tokens) injected at runtime, never stored in prompts or logs.
+- **Multi-model support.** Each user connects their own API accounts (Claude, ChatGPT, Gemini, etc.) and Tekton auto-detects access based on their email. For overflow or users without keys, a shared pool routes through OpenRouter. Configuration is per-org: which models are available, which is the default, and spending limits per user/team.
 
 **Draft/plan mode.** Before coding, an agent can read the codebase and propose a plan (files to change, approach, tradeoffs) as a rendered Markdown draft. Team members comment, suggest changes, approve or reject. Comments are fed back to the agent, which can regenerate the plan. Only after approval does execution begin. Configurable per task: skip straight to coding for simple fixes, require approval for larger changes.
 
-**Security and access control.** RBAC for teams and orgs: who can create tasks, which repos they can target, who can approve plans, who can see costs. Secret management for agent credentials (database passwords, API keys, service tokens) injected at runtime, never stored in prompts or logs.
+**First demo milestone (definition of done).**
+- ✅ Single node install
+- ✅ Single repo task creation
+- ✅ Agent runs, opens PR
+- ✅ Preview deployed
 
-### P1: Multiplier features (high leverage)
+### P1: Scale and collaboration foundations
+
+**Elastic infrastructure.** You configure a base fleet of bare metal machines and Tekton manages them as a pool. When demand exceeds capacity, it provisions cloud VPS instances (AWS, GCP, Hetzner Cloud, OVH Cloud) and runs NixOS VMs inside them. When demand drops, the elastic nodes are torn down. All declarative in a config file: base fleet size, max elastic nodes, provider credentials, and scaling thresholds.
+
+**Conversational threads.** Every task has a conversation thread, like GitHub PR discussions. Anyone on the team can jump into a running task, add follow-up prompts, see the full history, and see every preview URL generated along the way. Every message shows who submitted it.
+
+### P2: Multiplier features (high leverage)
 
 **CI integration and agent self-correction.** After an agent opens a PR, watch CI results. If tests fail, the agent picks up the failure logs and iterates. If a human leaves review comments, the agent addresses them without a new prompt. The loop ends at "PR merged", not "PR created."
+
+**Real-time collaboration.** Everything via WebSockets. When one person sends a follow-up, everyone watching sees it. When the agent writes code, everyone sees the logs stream. Uses Operational Transformation for shared state. Multiple users can be active in the same task simultaneously.
 
 **GitHub App integration.** Comment `/tekton fix this` on an issue and it picks up the task. Comment `/tekton address this feedback` on a PR review and it iterates. Conversational threads sync bidirectionally between Tekton and GitHub. Turns Tekton from a tool you go to into a tool that meets you where you already work.
 
@@ -170,7 +197,7 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 
 **Sandbox network policies.** Configurable network policies per repo or per task: allow package registries (npm, pip, hex), block everything else, or full access. Limits blast radius if a model behaves badly.
 
-### P2: Workflow and integrations
+### P3: Workflow and integrations
 
 **Approval gates.** Before an agent pushes or creates a PR, optionally pause and present the diff for human review. Configurable per repo or per team. The approval can happen in the dashboard, in Slack, or via a GitHub review.
 
@@ -192,7 +219,7 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 
 **Image and log attachments in prompts.** Paste images and log files directly into prompts. Agents consume these as context for debugging.
 
-### P3: Intelligence and observability
+### P4: Intelligence and observability
 
 **Repo onboarding and scoring.** Automated analysis when Tekton first encounters a repo: language, framework, test coverage, CI setup, build system. Stored as metadata for better agent context and task complexity estimation.
 
@@ -205,6 +232,12 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 **Task forking and checkpoints.** Save checkpoints during execution. Fork from any point to try a different approach without starting over. Explore multiple solutions in parallel.
 
 **Merge conflict resolution.** Detect overlapping file changes before they happen, serialize agents touching the same areas, and when conflicts do occur, spawn a resolution agent that rebases and fixes them.
+
+### Limitations (current)
+
+- Single-node installs are the primary supported path.
+- Cloud provider provisioning is not automated yet.
+- Multi-model orchestration is planned, not shipped.
 
 ### Known bugs
 

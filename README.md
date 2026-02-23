@@ -52,6 +52,10 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 
 **Duplicate work detection.** An AI watcher monitors all active and recent prompts across the org in real-time. When someone submits a task that overlaps with something already in progress or recently completed, Tekton flags it: "Alice is already working on something similar in task X" or "This was addressed 2 days ago in PR #123." Prevents two people from unknowingly asking agents to do the same thing, saves compute, and surfaces opportunities to collaborate. Uses embeddings over prompt + repo + file paths for semantic similarity, not just keyword matching.
 
+**Security and access control.** RBAC for teams and orgs: who can create tasks, which repos they can target, who can approve plans, who can see costs. Secret management for agents that need credentials during tasks (database passwords, internal API keys, service tokens). Secrets are injected into the container at runtime, never stored in prompts or logs.
+
+**Merge conflict resolution.** When multiple agents work on the same repo simultaneously, their branches will conflict. Tekton should detect overlapping file changes before they happen, serialize agents touching the same areas, and when conflicts do occur, spawn a resolution agent that rebases and fixes them automatically.
+
 ### P1: Multiplier features (high leverage)
 
 **GitHub App integration.** Beyond webhooks, Tekton becomes a GitHub App. Comment `/tekton fix this` on an issue and it picks up the task. Comment `/tekton address this feedback` on a PR review and it iterates. The conversational threads live both in Tekton and in GitHub with comments syncing bidirectionally. This turns Tekton from a tool you go to into a tool that meets you where you already work.
@@ -61,6 +65,14 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 **Queue management and priority.** A proper job queue with priority levels (urgent, normal, background), fair scheduling across users, and preemption. High-priority tasks can bump low-priority ones when capacity is constrained. Visibility into queue depth and wait times.
 
 **Cost tracking and budgets.** With multiple API providers and elastic infrastructure, cost visibility is essential. Track token usage per task, compute time per container, and aggregate by user and team. Org admins set spending limits and get alerts. The dashboard shows burn rate, cost per merged PR, and trends over time.
+
+**CI integration and agent self-correction.** After an agent opens a PR, watch CI results. If tests fail, the agent picks up the failure logs and iterates automatically. If a human leaves review comments, the agent addresses them without needing a new prompt. The loop ends at "PR merged", not "PR created."
+
+**Multi-repo tasks.** Some changes span repositories (update an API and its client library, change a shared schema and all consumers). A single task should be able to coordinate agents across multiple repos, with each agent aware of what the others are doing, and the results linked together.
+
+**Local model support.** Beyond cloud APIs, support self-hosted models (Llama, DeepSeek, Qwen, etc.) running on the same infrastructure or a dedicated GPU node. Important for teams that can't send code to external providers, and for cutting costs on simpler tasks that don't need frontier models.
+
+**Scheduled and recurring tasks.** Cron-like jobs: "every Monday, check for dependency updates", "after every release, update the changelog", "scan for deprecated API usage weekly." Define them in the dashboard or in a `.tekton/schedules` config in the repo.
 
 ### P2: Polish and workflow (quality of life)
 
@@ -77,6 +89,12 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 **Repo onboarding and scoring.** When Tekton first encounters a repo, run an automated analysis: language, framework, test coverage, CI setup, build system. Store this as metadata to give future agents better context and to estimate task complexity before it starts.
 
 **Audit log.** Every action, every prompt, every API call. Who did what, when, and what happened. Essential for teams with compliance requirements, but also useful for debugging and understanding how the platform is being used.
+
+**Agent quality metrics.** Track how often agent PRs get merged vs rejected, average review cycles needed, time from task creation to merge, and which repos or task types agents handle well vs poorly. Gives you real data on whether agents are helping or just creating review burden.
+
+**Org-wide intelligence.** An AI that watches everything happening across the org: all prompts, all task outcomes, all repos. Surfaces patterns humans would miss. "Your team keeps asking agents to fix flaky tests in repo X, the root cause is Y." "This repo generates 3x more failed tasks than average, here's what's different." "Based on the last 50 tasks, agents struggle with Z, consider adding it to the repo's agent memory." Turns the audit log and metrics into actionable insights instead of just data.
+
+**Task and prompt persistence.** Every prompt, response, agent action, and conversation thread is stored in a database with full history. Nothing is lost when a container is destroyed. Tasks are queryable and searchable across the org. This is the foundation that makes agent memory, duplicate detection, org-wide intelligence, and audit logging possible.
 
 ### Backlog: Community feature requests
 

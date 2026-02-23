@@ -43,3 +43,37 @@ Tekton is a self-hosted platform for running background AI coding agents at scal
 **Repo Onboarding & Scoring** — When Tekton first encounters a repo, run an automated analysis: language, framework, test coverage, CI setup, build system. Store this as metadata to give future agents better context and to estimate task complexity before it starts.
 
 **Audit Log** — Every action, every prompt, every API call — who did what, when, and what happened. Essential for teams with compliance requirements, but also useful for debugging and understanding how the platform is being used.
+
+### Backlog — Community feature requests
+
+**Prompt Attribution** — Show which person submitted each prompt in the conversation thread. Every message in a task should display the author, so the full history reads like a real conversation with clear accountability.
+
+**Image & Log Attachments in Prompts** — Allow pasting images and log files directly into prompts and follow-up messages. Agents should be able to consume these as context — e.g., paste a screenshot of a bug, paste error logs, and the agent uses them to debug.
+
+**Persistent Task Logs** — Task logs in preview mode currently rely on a WebSocket connection that can die, and reloading the page loses the logs. Logs should be cached server-side and served from cache when the WebSocket reconnects or the page reloads, so you never lose visibility into what happened.
+
+**Multiplayer Plan Mode** — Extend draft/plan mode into a full collaborative workflow. The agent publishes a plan with properly rendered Markdown. Team members can comment, request changes, and individually approve or reject the plan. Comments are fed back to the agent, which can regenerate the plan taking them into account (or not). Once approved, the agent executes the plan.
+
+**In-Preview Console** — Add a terminal/console inside the preview environment so users can interact with the running deployment directly. Use case: spin up a service with a new feature, run `iex -S mix phx.server`, and manually test commands against it without leaving Tekton.
+
+**Per-Project Environment Variables** — Allow configuring a set of environment variables per project, with the ability to add task-specific overrides. These env vars are available both to the AI agent while coding and in the preview console for manual testing.
+
+**Task Name Reflects Current Work** — The task name/title should dynamically update to reflect what the agent is currently working on, so the task list gives an at-a-glance view of active work without needing to open each task.
+
+**One-Click PR Creation** — Add a button to create a GitHub PR directly from a completed task. Pre-fill the PR title and description from the task context and conversation history, so shipping the result is one click away.
+
+**Remove Update Button** — Remove the update button from the UI to simplify the interface and avoid accidental or confusing state changes.
+
+**Branch Selector Dropdown** — Replace the plain text branch input with a proper dropdown that filters branches as you type and defaults to `main`. Makes it easier to target the right base branch when creating a task.
+
+**Custom Task Naming** — Let users set a custom name for a task at creation time, instead of auto-generating one from the prompt. The task list should show meaningful names that the user chose.
+
+**Show Originating Task on PR Push** — After the agent pushes a branch and shows the GitHub PR link, also display a link back to the Tekton task that originated the work, so there's full traceability between tasks and PRs.
+
+**Fix Screenshot Capture** — Screenshots currently fail inside the Nix VM because the browser runs as root without `--no-sandbox`. Fix the sandboxing setup so automated screenshots work reliably in the VM environment.
+
+**VM Startup Logs** — Surface Nix VM boot and startup logs in the UI so users can debug startup failures. When a VM fails to come up, the logs should be accessible from the task view rather than requiring SSH access to the host.
+
+**Mark Task as Failed** — Add the ability to explicitly mark a task as failed. This gives a clear terminal state for tasks that didn't succeed, separate from "completed" or just abandoned, and helps with tracking success rates and debugging.
+
+**Run Real-World Apps (Escolaria etc.)** — Support running full production-like applications (e.g., Escolaria) inside the preview environment. This means handling complex app setups with databases, dependencies, and services beyond simple dev servers.

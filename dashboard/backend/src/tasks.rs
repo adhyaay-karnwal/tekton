@@ -453,20 +453,13 @@ async fn follow_up_loop(
     preview_created: &mut bool,
     tx: &broadcast::Sender<String>,
 ) -> Result<FollowUpOutcome, AppError> {
-    let timeout_dur = std::time::Duration::from_secs(5 * 60);
-    let mut deadline = tokio::time::Instant::now() + timeout_dur;
     let mut last_seen_id: i64 = 0;
 
     update_task_status(db, task_id, "awaiting_followup", None).await?;
-    let _ = tx.send("[STATUS] Waiting for follow-up messages (send '__done__' or wait 5 min to finish)...".to_string());
+    let _ = tx.send("[STATUS] Waiting for follow-up messages (click 'Mark Done' to finish)...".to_string());
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-
-        if tokio::time::Instant::now() >= deadline {
-            let _ = tx.send("[STATUS] Follow-up timeout elapsed, finishing up.".to_string());
-            break;
-        }
 
         // Check for new messages since last seen (by ID, not timestamp, to avoid
         // missing messages sent during long-running steps like preview create)
@@ -508,13 +501,8 @@ async fn follow_up_loop(
 
             update_task_status(db, task_id, "awaiting_followup", None).await?;
             let _ = tx.send("[STATUS] Waiting for more follow-up messages...".to_string());
-
-            // Reset the timeout
-            deadline = tokio::time::Instant::now() + timeout_dur;
         }
     }
-
-    Ok(FollowUpOutcome::Done)
 }
 
 async fn push_and_preview(

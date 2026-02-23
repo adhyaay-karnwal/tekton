@@ -142,6 +142,12 @@ ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick 
 
 **Private workspaces.** Some work shouldn't be visible to the whole org. A team or group of people can create a private workspace tied to a repo or conversation, like a private Google Doc. Only invited members see the tasks, prompts, agent output, and previews. Everyone else sees nothing. Use case: management working on financial modeling, a security team investigating a vulnerability, or a small group prototyping something before sharing it. Visibility is per-workspace, not just per-repo.
 
+**API and SDK.** A REST API and client SDK to create tasks, poll status, get results, and manage agents programmatically. Teams will want to integrate Tekton into their own scripts, CI pipelines, and internal tools. This is also what makes scheduled tasks, event-driven tasks, and third-party integrations possible to build outside of Tekton itself.
+
+**Custom agent runtimes.** Right now it's Claude Code. But some teams will want Aider, OpenHands, Codex, or their own custom scripts. The agent runtime should be pluggable: Tekton handles the container, the repo, the PR, and the preview. What runs inside is configurable per task or per repo.
+
+**Sandbox network policies.** Agents have internet access but maybe they shouldn't. Configurable network policies per repo or per task: allow package registries (npm, pip, hex), block everything else, or full access. Prevents agents from making unexpected external calls and limits blast radius if a model behaves badly.
+
 ### P1: Multiplier features (high leverage)
 
 **CI integration and agent self-correction.** After an agent opens a PR, watch CI results. If tests fail, the agent picks up the failure logs and iterates automatically. If a human leaves review comments, the agent addresses them without needing a new prompt. The loop ends at "PR merged", not "PR created."

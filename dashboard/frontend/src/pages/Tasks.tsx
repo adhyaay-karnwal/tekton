@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listTasks, createTask } from '@/lib/api';
+import { listTasks, createTask, classifyPrompt } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { statusVariant } from '@/lib/status';
+import VoiceInput from '@/components/VoiceInput';
 
 export default function Tasks() {
   const queryClient = useQueryClient();
@@ -22,6 +23,43 @@ export default function Tasks() {
   const [prompt, setPrompt] = useState('');
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
+  const [repoAutoDetected, setRepoAutoDetected] = useState(false);
+
+  const classifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleClassify = useCallback((text: string) => {
+    if (classifyTimerRef.current) clearTimeout(classifyTimerRef.current);
+    if (text.length <= 20) return;
+    classifyTimerRef.current = setTimeout(async () => {
+      try {
+        const result = await classifyPrompt(text);
+        if (result.repo) {
+          setRepo(result.repo);
+          setRepoAutoDetected(true);
+        }
+      } catch {
+        // silently ignore classify errors
+      }
+    }, 1000);
+  }, []);
+
+  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setPrompt(e.target.value);
+    setRepoAutoDetected(false);
+    scheduleClassify(e.target.value);
+  };
+
+  const handleTranscript = (text: string) => {
+    const next = prompt ? `${prompt} ${text}` : text;
+    setPrompt(next);
+    setRepoAutoDetected(false);
+    scheduleClassify(next);
+  };
+
+  const handleRepoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setRepo(e.target.value);
+    setRepoAutoDetected(false);
+  };
 
   const createMutation = useMutation({
     mutationFn: createTask,
@@ -31,6 +69,7 @@ export default function Tasks() {
       setPrompt('');
       setRepo('');
       setBaseBranch('main');
+      setRepoAutoDetected(false);
     },
   });
 
@@ -65,22 +104,31 @@ export default function Tasks() {
               <div className="space-y-4 mb-4">
                 <div className="space-y-2">
                   <Label htmlFor="prompt">Prompt</Label>
-                  <Textarea
-                    id="prompt"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Describe the coding task for Claude..."
-                    required
-                    rows={4}
-                  />
+                  <div className="flex gap-2 items-start">
+                    <Textarea
+                      id="prompt"
+                      value={prompt}
+                      onChange={handlePromptChange}
+                      placeholder="Describe the coding task for Claude..."
+                      required
+                      rows={4}
+                      className="flex-1"
+                    />
+                    <VoiceInput onTranscript={handleTranscript} />
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="task-repo">Repository</Label>
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="task-repo">Repository</Label>
+                      {repoAutoDetected && (
+                        <span className="text-xs text-muted-foreground">auto-detected</span>
+                      )}
+                    </div>
                     <Input
                       id="task-repo"
                       value={repo}
-                      onChange={(e) => setRepo(e.target.value)}
+                      onChange={handleRepoChange}
                       placeholder="owner/repo"
                       required
                     />

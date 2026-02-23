@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft } from 'lucide-react';
 import LogViewer from '@/components/LogViewer';
-import { getTask, connectTaskOutput } from '@/lib/api';
+import TaskChat from '@/components/TaskChat';
+import { getTask, connectTaskOutput, listSubtasks, getMe } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { statusVariant } from '@/lib/status';
+
+const CHAT_STATUSES = ['awaiting_followup', 'running_claude'];
 
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>();
@@ -23,6 +26,17 @@ export default function TaskDetail() {
     refetchInterval: 3000,
   });
 
+  const { data: subtasks } = useQuery({
+    queryKey: ['subtasks', id],
+    queryFn: () => listSubtasks(id!),
+    enabled: !!id,
+  });
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: getMe,
+  });
+
   useEffect(() => {
     if (!id) return;
 
@@ -35,6 +49,8 @@ export default function TaskDetail() {
       socket.close();
     };
   }, [id]);
+
+  const showChat = task && CHAT_STATUSES.includes(task.status);
 
   return (
     <div>
@@ -53,6 +69,22 @@ export default function TaskDetail() {
       {task && (
         <Card className="mb-6">
           <CardContent className="py-4">
+            {task.parent_task_id && (
+              <>
+                <div className="mb-3">
+                  <span className="text-muted-foreground text-sm">Parent Task</span>
+                  <p className="mt-1">
+                    <Link
+                      to={`/tasks/${task.parent_task_id}`}
+                      className="font-mono text-sm text-blue-400 hover:text-blue-300"
+                    >
+                      {task.parent_task_id.slice(0, 8)}
+                    </Link>
+                  </p>
+                </div>
+                <Separator className="mb-3" />
+              </>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground">Repo</span>
@@ -83,6 +115,12 @@ export default function TaskDetail() {
                   </p>
                 </div>
               )}
+              {task.created_by && (
+                <div>
+                  <span className="text-muted-foreground">Created by</span>
+                  <p className="truncate">{task.created_by}</p>
+                </div>
+              )}
             </div>
             <Separator className="my-3" />
             <div>
@@ -98,6 +136,57 @@ export default function TaskDetail() {
                 </div>
               </>
             )}
+            {task.screenshot_url && (
+              <>
+                <Separator className="my-3" />
+                <div>
+                  <span className="text-muted-foreground text-sm">Preview Screenshot</span>
+                  <div className="mt-2">
+                    <a href={task.screenshot_url} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={task.screenshot_url}
+                        alt="Preview screenshot"
+                        className="max-w-full rounded-md border border-border hover:opacity-90 transition-opacity"
+                        style={{ maxHeight: '300px', objectFit: 'contain' }}
+                      />
+                    </a>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {showChat && me && (
+        <TaskChat taskId={id!} currentUserEmail={me.email} />
+      )}
+
+      {subtasks && subtasks.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader className="py-3">
+            <CardTitle className="text-base">Subtasks</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-2">
+              {subtasks.map((sub) => (
+                <Link key={sub.id} to={`/tasks/${sub.id}`}>
+                  <Card className="hover:border-muted-foreground/25 transition-colors">
+                    <CardContent className="py-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono text-sm text-muted-foreground">
+                          {sub.id.slice(0, 8)}
+                        </span>
+                        <Badge variant={statusVariant(sub.status).variant} className={statusVariant(sub.status).className}>
+                          {sub.status}
+                        </Badge>
+                      </div>
+                      <p className="text-sm line-clamp-1">{sub.prompt}</p>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

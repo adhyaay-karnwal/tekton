@@ -30,11 +30,24 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             preview_url TEXT,
             error_message TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            parent_task_id TEXT,
+            created_by TEXT,
+            screenshot_url TEXT
         )",
     )
     .execute(pool)
     .await?;
+
+    // Add new columns to existing tasks table if they don't exist (for upgrades)
+    for col_sql in &[
+        "ALTER TABLE tasks ADD COLUMN parent_task_id TEXT",
+        "ALTER TABLE tasks ADD COLUMN created_by TEXT",
+        "ALTER TABLE tasks ADD COLUMN screenshot_url TEXT",
+    ] {
+        // Ignore errors — column likely already exists
+        let _ = sqlx::query(col_sql).execute(pool).await;
+    }
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS task_logs (
@@ -42,6 +55,18 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             task_id TEXT NOT NULL REFERENCES tasks(id),
             timestamp TEXT NOT NULL DEFAULT (datetime('now')),
             line TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS task_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL REFERENCES tasks(id),
+            sender TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
     )
     .execute(pool)

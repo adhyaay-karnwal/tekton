@@ -67,6 +67,9 @@ pub struct Task {
     pub error_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub parent_task_id: Option<String>,
+    pub created_by: Option<String>,
+    pub screenshot_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +77,7 @@ pub struct CreateTaskRequest {
     pub prompt: String,
     pub repo: String,
     pub base_branch: Option<String>,
+    pub parent_task_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -82,4 +86,32 @@ pub struct TaskLog {
     pub task_id: String,
     pub timestamp: String,
     pub line: String,
+}
+
+// ── Task Messages ──
+
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct TaskMessage {
+    pub id: i64,
+    pub task_id: String,
+    pub sender: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendMessageRequest {
+    pub content: String,
+}
+
+// ── Classify ──
+
+#[derive(Debug, Deserialize)]
+pub struct ClassifyRequest {
+    pub prompt: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClassifyResponse {
+    pub repo: String,
 }

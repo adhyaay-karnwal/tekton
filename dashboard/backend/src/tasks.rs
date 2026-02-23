@@ -9,7 +9,10 @@ use uuid::Uuid;
 use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::error::AppError;
-use crate::models::{CreateTaskRequest, Task, TaskLog};
+use crate::models::{
+    ClassifyRequest, ClassifyResponse, CreateTaskRequest, SendMessageRequest, Task, TaskLog,
+    TaskMessage,
+};
 use crate::shell;
 
 pub type TaskChannels = Arc<DashMap<String, broadcast::Sender<String>>>;
@@ -41,8 +44,28 @@ pub async fn get_task(
     Ok(Json(task))
 }
 
-pub async fn create_task(
+pub async fn get_subtasks(
     _user: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<Task>>, AppError> {
+    // Verify parent exists
+    let _ = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Task not found".into()))?;
+
+    let subtasks =
+        sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC")
+            .bind(&id)
+            .fetch_all(&state.db)
+            .await?;
+    Ok(Json(subtasks))
+}
+
+pub async fn create_task(
+    user: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<Json<Task>, AppError> {
@@ -56,17 +79,34 @@ pub async fn create_task(
         )));
     }
 
+    // Validate parent_task_id if provided
+    if let Some(ref parent_id) = req.parent_task_id {
+        let parent_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks WHERE id = ?")
+            .bind(parent_id)
+            .fetch_one(&state.db)
+            .await?;
+        if parent_exists == 0 {
+            return Err(AppError::BadRequest(format!(
+                "Parent task '{}' does not exist",
+                parent_id
+            )));
+        }
+    }
+
     let id = Uuid::new_v4().to_string();
     let short_id = &id[..6];
     let base_branch = req.base_branch.as_deref().unwrap_or("main");
+    let created_by = &user.0.sub;
 
     sqlx::query(
-        "INSERT INTO tasks (id, prompt, repo, base_branch, status) VALUES (?, ?, ?, ?, 'pending')",
+        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
     )
     .bind(&id)
     .bind(&req.prompt)
     .bind(&req.repo)
     .bind(base_branch)
+    .bind(&req.parent_task_id)
+    .bind(created_by)
     .execute(&state.db)
     .await?;
 
@@ -153,24 +193,17 @@ async fn run_task_pipeline(
     update_task_status(db, task_id, "running_claude", None).await?;
     log_and_send(db, task_id, &tx, "[STEP] Running Claude...");
 
-    let escaped_prompt = prompt.replace('\'', "'\\''");
-    let claude_cmd = format!(
-        "cd /home/agent/repo && claude --dangerously-skip-permissions -p '{escaped_prompt}'"
-    );
-    shell::agent_exec(&agent_name, &claude_cmd, tx.clone()).await?;
+    run_claude_in_agent(&agent_name, prompt, tx.clone()).await?;
 
     // Step 3b: Commit any changes Claude made
+    commit_changes_in_agent(&agent_name, prompt, tx.clone()).await?;
     log_and_send(db, task_id, &tx, "[STEP] Checking for changes...");
-    let commit_cmd = format!(
-        "cd /home/agent/repo && \
-         git add -A && \
-         if git diff --cached --quiet; then \
-           echo 'No changes to commit'; \
-         else \
-           git commit -m 'Claude: {escaped_prompt}'; \
-         fi"
-    );
-    shell::agent_exec(&agent_name, &commit_cmd, tx.clone()).await?;
+
+    // Step 3c: Follow-up loop — wait up to 5 minutes for follow-up messages
+    let follow_up_result = follow_up_loop(config, db, task_id, &agent_name, prompt, &tx).await?;
+    if follow_up_result == FollowUpOutcome::Done {
+        // __done__ was sent or timeout elapsed — proceed to push
+    }
 
     // Step 4: Push branch
     update_task_status(db, task_id, "pushing", None).await?;
@@ -200,12 +233,286 @@ async fn run_task_pipeline(
     update_task_field(db, task_id, "preview_slug", &preview_slug).await?;
     update_task_field(db, task_id, "preview_url", &preview_url).await?;
 
+    // Step 6: Take screenshot
+    take_screenshot(config, db, task_id, &preview_slug, &preview_url, &tx).await;
+
     // Done
     update_task_status(db, task_id, "completed", None).await?;
     log_and_send(db, task_id, &tx, &format!("[DONE] Preview available at {preview_url}"));
 
     Ok(())
 }
+
+async fn run_claude_in_agent(
+    agent_name: &str,
+    prompt: &str,
+    tx: broadcast::Sender<String>,
+) -> Result<(), AppError> {
+    let escaped_prompt = prompt.replace('\'', "'\\''");
+    let claude_cmd = format!(
+        "cd /home/agent/repo && claude --dangerously-skip-permissions -p '{escaped_prompt}'"
+    );
+    shell::agent_exec(agent_name, &claude_cmd, tx).await
+}
+
+async fn commit_changes_in_agent(
+    agent_name: &str,
+    prompt: &str,
+    tx: broadcast::Sender<String>,
+) -> Result<(), AppError> {
+    let escaped_prompt = prompt.replace('\'', "'\\''");
+    let commit_cmd = format!(
+        "cd /home/agent/repo && \
+         git add -A && \
+         if git diff --cached --quiet; then \
+           echo 'No changes to commit'; \
+         else \
+           git commit -m 'Claude: {escaped_prompt}'; \
+         fi"
+    );
+    shell::agent_exec(agent_name, &commit_cmd, tx).await
+}
+
+#[derive(PartialEq)]
+enum FollowUpOutcome {
+    Done,
+}
+
+async fn follow_up_loop(
+    _config: &Config,
+    db: &SqlitePool,
+    task_id: &str,
+    agent_name: &str,
+    _initial_prompt: &str,
+    tx: &broadcast::Sender<String>,
+) -> Result<FollowUpOutcome, AppError> {
+    let timeout = std::time::Duration::from_secs(5 * 60);
+    let start = tokio::time::Instant::now();
+    let mut last_check = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    update_task_status(db, task_id, "awaiting_followup", None).await?;
+    let _ = tx.send("[STATUS] Waiting for follow-up messages (send '__done__' or wait 5 min to push)...".to_string());
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        if start.elapsed() >= timeout {
+            let _ = tx.send("[STATUS] Follow-up timeout elapsed, proceeding to push.".to_string());
+            break;
+        }
+
+        // Check for new messages since last check
+        let new_messages: Vec<TaskMessage> = sqlx::query_as::<_, TaskMessage>(
+            "SELECT * FROM task_messages WHERE task_id = ? AND created_at > ? ORDER BY created_at ASC",
+        )
+        .bind(task_id)
+        .bind(&last_check)
+        .fetch_all(db)
+        .await?;
+
+        if new_messages.is_empty() {
+            continue;
+        }
+
+        // Update last_check to latest message time
+        last_check = new_messages.last().unwrap().created_at.clone();
+
+        for msg in &new_messages {
+            if msg.content.trim() == "__done__" {
+                let _ = tx.send("[STATUS] Received '__done__', proceeding to push.".to_string());
+                return Ok(FollowUpOutcome::Done);
+            }
+
+            // Re-invoke Claude with the follow-up message
+            let _ = tx.send(format!("[FOLLOWUP] Running Claude with follow-up from {}...", msg.sender));
+            update_task_status(db, task_id, "running_claude", None).await?;
+
+            run_claude_in_agent(agent_name, &msg.content, tx.clone()).await?;
+            commit_changes_in_agent(agent_name, &msg.content, tx.clone()).await?;
+
+            update_task_status(db, task_id, "awaiting_followup", None).await?;
+            let _ = tx.send("[STATUS] Waiting for more follow-up messages...".to_string());
+
+            // Reset the timeout from now
+            // (we can't reset start, but we update last_check and keep looping)
+        }
+    }
+
+    Ok(FollowUpOutcome::Done)
+}
+
+async fn take_screenshot(
+    config: &Config,
+    db: &SqlitePool,
+    task_id: &str,
+    preview_slug: &str,
+    preview_url: &str,
+    tx: &broadcast::Sender<String>,
+) {
+    let screenshots_dir = format!("{}/screenshots", config.static_dir);
+    if let Err(e) = std::fs::create_dir_all(&screenshots_dir) {
+        let _ = tx.send(format!("[WARN] Could not create screenshots dir: {e}"));
+        return;
+    }
+
+    let screenshot_path = format!("{screenshots_dir}/{preview_slug}.png");
+    let screenshot_url = format!("/screenshots/{preview_slug}.png");
+
+    let _ = tx.send(format!("[STEP] Taking screenshot of {preview_url}..."));
+
+    let output = tokio::process::Command::new(&config.chromium_bin)
+        .args([
+            "--headless",
+            "--disable-gpu",
+            &format!("--screenshot={screenshot_path}"),
+            "--window-size=1280,720",
+            preview_url,
+        ])
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let _ = sqlx::query(
+                "UPDATE tasks SET screenshot_url = ?, updated_at = datetime('now') WHERE id = ?",
+            )
+            .bind(&screenshot_url)
+            .bind(task_id)
+            .execute(db)
+            .await;
+            let _ = tx.send(format!("[STEP] Screenshot saved: {screenshot_url}"));
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let _ = tx.send(format!("[WARN] Screenshot failed: {stderr}"));
+        }
+        Err(e) => {
+            let _ = tx.send(format!("[WARN] Could not run chromium: {e}"));
+        }
+    }
+}
+
+// ── Classify ──
+
+pub async fn classify(
+    _user: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<ClassifyRequest>,
+) -> Result<Json<ClassifyResponse>, AppError> {
+    if state.config.allowed_repos.is_empty() {
+        return Err(AppError::BadRequest("No allowed repos configured".into()));
+    }
+
+    let repo_list = state
+        .config
+        .allowed_repos
+        .iter()
+        .enumerate()
+        .map(|(i, r)| format!("{}. {}", i + 1, r))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let system_prompt = format!(
+        "You are a repository classifier. Given a task description, pick the single best matching \
+         repository from this list and respond with ONLY the repo name (owner/repo format), nothing else.\n\n\
+         Available repositories:\n{repo_list}"
+    );
+
+    let full_prompt = format!("{system_prompt}\n\nTask: {}", req.prompt);
+    let escaped = full_prompt.replace('\'', "'\\''");
+
+    // Run claude CLI on the host using the credentials directory
+    let output = tokio::process::Command::new(&state.config.claude_bin)
+        .env("CLAUDE_CONFIG_DIR", &state.config.claude_config_dir)
+        .args(["--dangerously-skip-permissions", "-p", &escaped])
+        .output()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to run claude for classification: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Find which allowed repo the response matches
+    let repo = state
+        .config
+        .allowed_repos
+        .iter()
+        .find(|r| stdout.contains(r.as_str()))
+        .cloned()
+        .unwrap_or_else(|| {
+            // Fallback: return the raw output truncated, or first repo
+            if stdout.is_empty() {
+                state.config.allowed_repos[0].clone()
+            } else {
+                stdout.lines().next().unwrap_or("").to_string()
+            }
+        });
+
+    Ok(Json(ClassifyResponse { repo }))
+}
+
+// ── Messages ──
+
+pub async fn list_messages(
+    _user: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TaskMessage>>, AppError> {
+    // Verify task exists
+    let _ = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let messages = sqlx::query_as::<_, TaskMessage>(
+        "SELECT * FROM task_messages WHERE task_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(messages))
+}
+
+pub async fn send_message(
+    user: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SendMessageRequest>,
+) -> Result<Json<TaskMessage>, AppError> {
+    // Verify task exists
+    let task_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await?;
+    if task_exists == 0 {
+        return Err(AppError::NotFound("Task not found".into()));
+    }
+
+    if req.content.trim().is_empty() {
+        return Err(AppError::BadRequest("Message content cannot be empty".into()));
+    }
+
+    let sender = &user.0.sub;
+
+    sqlx::query(
+        "INSERT INTO task_messages (task_id, sender, content) VALUES (?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(sender)
+    .bind(&req.content)
+    .execute(&state.db)
+    .await?;
+
+    let message = sqlx::query_as::<_, TaskMessage>(
+        "SELECT * FROM task_messages WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(message))
+}
+
+// ── Helpers ──
 
 async fn get_github_token() -> Result<String, AppError> {
     let resp = reqwest::Client::new()

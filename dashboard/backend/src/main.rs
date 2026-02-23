@@ -63,6 +63,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/tasks", post(tasks::create_task))
         .route("/tasks/{id}", get(tasks::get_task))
         .route("/tasks/{id}/logs", get(tasks::get_task_logs))
+        .route("/tasks/{id}/subtasks", get(tasks::get_subtasks))
+        .route("/tasks/{id}/messages", get(tasks::list_messages))
+        .route("/tasks/{id}/messages", post(tasks::send_message))
+        // Classify
+        .route("/classify", post(tasks::classify))
         // WebSockets
         .route("/ws/logs/{slug}", get(ws::preview_logs_ws))
         .route("/ws/tasks/{id}", get(ws::task_output_ws));

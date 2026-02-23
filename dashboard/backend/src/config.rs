@@ -15,6 +15,9 @@ pub struct Config {
     pub preview_bin: String,
     pub agent_bin: String,
     pub static_dir: String,
+    pub claude_bin: String,
+    pub claude_config_dir: String,
+    pub chromium_bin: String,
 }
 
 impl Config {
@@ -48,6 +51,11 @@ impl Config {
             agent_bin: env::var("AGENT_BIN")
                 .unwrap_or_else(|_| "/run/current-system/sw/bin/agent".into()),
             static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into()),
+            claude_bin: env::var("CLAUDE_BIN")
+                .unwrap_or_else(|_| "/run/current-system/sw/bin/claude".into()),
+            claude_config_dir: env::var("CLAUDE_CONFIG_DIR")
+                .unwrap_or_else(|_| "/var/secrets/claude".into()),
+            chromium_bin: env::var("CHROMIUM_BIN").unwrap_or_else(|_| "chromium".into()),
         })
     }
 }

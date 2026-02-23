@@ -165,6 +165,12 @@ pub async fn create_task(
     let base_branch = req.base_branch.as_deref().unwrap_or("main");
     let created_by = &user.0.sub;
 
+    let image_url_json = req
+        .image_urls
+        .as_ref()
+        .filter(|v| !v.is_empty())
+        .map(|v| serde_json::to_string(v).unwrap());
+
     sqlx::query(
         "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
     )
@@ -174,7 +180,7 @@ pub async fn create_task(
     .bind(base_branch)
     .bind(&req.parent_task_id)
     .bind(created_by)
-    .bind(&req.image_url)
+    .bind(&image_url_json)
     .execute(&state.db)
     .await?;
 
@@ -195,13 +201,13 @@ pub async fn create_task(
     let prompt = req.prompt.clone();
     let repo = req.repo.clone();
     let base = base_branch.to_string();
-    let image_url = req.image_url.clone();
+    let image_url_json2 = image_url_json.clone();
     let channels = state.task_channels.clone();
 
     tokio::spawn(async move {
         let agent_name = format!("a-{short}");
         let result = run_task_pipeline(
-            &config, &db, &task_id, &short, &prompt, &repo, &base, image_url.as_deref(), tx.clone(),
+            &config, &db, &task_id, &short, &prompt, &repo, &base, image_url_json2.as_deref(), tx.clone(),
         )
         .await;
 
@@ -232,7 +238,7 @@ async fn run_task_pipeline(
     prompt: &str,
     repo: &str,
     base_branch: &str,
-    image_url: Option<&str>,
+    image_url_json: Option<&str>,
     tx: broadcast::Sender<String>,
 ) -> Result<(), AppError> {
     let agent_name = format!("a-{short_id}");
@@ -258,18 +264,8 @@ async fn run_task_pipeline(
     shell::agent_exec(&agent_name, &clone_cmd, tx.clone()).await?;
     update_task_field(db, task_id, "branch_name", &branch_name).await?;
 
-    // Step 3: Copy image and run Claude (streaming)
-    let effective_prompt = if let Some(url) = image_url {
-        copy_image_to_agent(config, &agent_name, url, &tx).await?
-            .map(|remote_path| {
-                format!(
-                    "I've attached a reference image at {remote_path}. Read it first to see what I'm referring to.\n\n{prompt}"
-                )
-            })
-            .unwrap_or_else(|| prompt.to_string())
-    } else {
-        prompt.to_string()
-    };
+    // Step 3: Copy images and run Claude (streaming)
+    let effective_prompt = augment_prompt_with_images(config, &agent_name, image_url_json, prompt, &tx).await?;
 
     update_task_status(db, task_id, "running_claude", None).await?;
     log_and_send(db, task_id, &tx, "[STEP] Running Claude...");
@@ -319,23 +315,20 @@ async fn run_claude_streaming(
     shell::agent_exec_claude_streaming(agent_name, &claude_cmd, tx).await
 }
 
-/// Copy an uploaded image into an agent container.
-/// Returns the remote path inside the container, or None if the copy fails (non-fatal).
-async fn copy_image_to_agent(
+/// Parse image_url JSON and copy all images into an agent container.
+/// Returns a list of remote paths that were successfully copied.
+async fn copy_images_to_agent(
     config: &Config,
     agent_name: &str,
-    image_url: &str,
+    image_url_json: &str,
     tx: &broadcast::Sender<String>,
-) -> Result<Option<String>, AppError> {
-    // image_url is like "/uploads/abc-123.png"
-    let filename = image_url
-        .rsplit('/')
-        .next()
-        .unwrap_or("image.png");
-    let local_path = format!("{}{}", config.static_dir, image_url);
-    let remote_path = format!("/home/agent/uploads/{filename}");
+) -> Result<Vec<String>, AppError> {
+    let urls: Vec<String> = serde_json::from_str(image_url_json).unwrap_or_default();
+    if urls.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let _ = tx.send(format!("[STEP] Copying image to agent container..."));
+    let _ = tx.send(format!("[STEP] Copying {} image(s) to agent container...", urls.len()));
 
     // Create uploads dir in agent
     if let Err(e) = shell::agent_exec(
@@ -346,16 +339,54 @@ async fn copy_image_to_agent(
     .await
     {
         let _ = tx.send(format!("[WARN] Failed to create uploads dir in agent: {e}"));
-        return Ok(None);
+        return Ok(vec![]);
     }
 
-    // SCP the file
-    if let Err(e) = shell::scp_to_agent(agent_name, &local_path, &remote_path).await {
-        let _ = tx.send(format!("[WARN] Failed to copy image to agent: {e}"));
-        return Ok(None);
+    let mut remote_paths = Vec::new();
+    for url in &urls {
+        let filename = url.rsplit('/').next().unwrap_or("image.png");
+        let local_path = format!("{}{}", config.static_dir, url);
+        let remote_path = format!("/home/agent/uploads/{filename}");
+
+        match shell::scp_to_agent(agent_name, &local_path, &remote_path).await {
+            Ok(_) => remote_paths.push(remote_path),
+            Err(e) => {
+                let _ = tx.send(format!("[WARN] Failed to copy image {filename}: {e}"));
+            }
+        }
     }
 
-    Ok(Some(remote_path))
+    Ok(remote_paths)
+}
+
+/// Augment a prompt with image references if any images are present.
+async fn augment_prompt_with_images(
+    config: &Config,
+    agent_name: &str,
+    image_url_json: Option<&str>,
+    prompt: &str,
+    tx: &broadcast::Sender<String>,
+) -> Result<String, AppError> {
+    let json = match image_url_json {
+        Some(j) if !j.is_empty() => j,
+        _ => return Ok(prompt.to_string()),
+    };
+
+    let remote_paths = copy_images_to_agent(config, agent_name, json, tx).await?;
+    if remote_paths.is_empty() {
+        return Ok(prompt.to_string());
+    }
+
+    let paths_list = remote_paths
+        .iter()
+        .map(|p| format!("- {p}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(format!(
+        "I've attached {} reference image(s). Read them first to see what I'm referring to:\n{paths_list}\n\n{prompt}",
+        remote_paths.len()
+    ))
 }
 
 async fn commit_changes_in_agent(
@@ -430,20 +461,10 @@ async fn follow_up_loop(
                 return Ok(FollowUpOutcome::Done);
             }
 
-            // Copy image if present, augment prompt
-            let effective_content = if let Some(ref url) = msg.image_url {
-                copy_image_to_agent(config, agent_name, url, tx)
-                    .await?
-                    .map(|remote_path| {
-                        format!(
-                            "I've attached a reference image at {remote_path}. Read it first to see what I'm referring to.\n\n{}",
-                            msg.content
-                        )
-                    })
-                    .unwrap_or_else(|| msg.content.clone())
-            } else {
-                msg.content.clone()
-            };
+            // Copy images if present, augment prompt
+            let effective_content = augment_prompt_with_images(
+                config, agent_name, msg.image_url.as_deref(), &msg.content, tx,
+            ).await?;
 
             // Re-invoke Claude with the follow-up message
             let _ = tx.send(format!("[FOLLOWUP] Running Claude with follow-up from {}...", msg.sender));
@@ -671,9 +692,16 @@ pub async fn send_message(
         return Err(AppError::NotFound("Task not found".into()));
     }
 
-    if req.content.trim().is_empty() {
+    let has_images = req.image_urls.as_ref().is_some_and(|v| !v.is_empty());
+    if req.content.trim().is_empty() && !has_images {
         return Err(AppError::BadRequest("Message content cannot be empty".into()));
     }
+
+    let image_url_json = req
+        .image_urls
+        .as_ref()
+        .filter(|v| !v.is_empty())
+        .map(|v| serde_json::to_string(v).unwrap());
 
     let sender = &user.0.sub;
 
@@ -683,7 +711,7 @@ pub async fn send_message(
     .bind(&id)
     .bind(sender)
     .bind(&req.content)
-    .bind(&req.image_url)
+    .bind(&image_url_json)
     .execute(&state.db)
     .await?;
 

@@ -79,7 +79,7 @@ pub struct CreateTaskRequest {
     pub repo: String,
     pub base_branch: Option<String>,
     pub parent_task_id: Option<String>,
-    pub image_url: Option<String>,
+    pub image_urls: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -105,7 +105,7 @@ pub struct TaskMessage {
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
-    pub image_url: Option<String>,
+    pub image_urls: Option<Vec<String>>,
 }
 
 // ── Classify ──

@@ -25,8 +25,8 @@ export default function Tasks() {
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
   const [repoAutoDetected, setRepoAutoDetected] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -66,28 +66,30 @@ export default function Tasks() {
     setRepoAutoDetected(false);
   };
 
-  const handleImageSelect = (file: File | null) => {
-    if (file) {
-      setImageFile(file);
+  const addImageFiles = (files: FileList | File[]) => {
+    const newFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (newFiles.length === 0) return;
+    setImageFiles((prev) => [...prev, ...newFiles]);
+    for (const file of newFiles) {
       const reader = new FileReader();
-      reader.onload = (e) => setImagePreview(e.target?.result as string);
+      reader.onload = (e) =>
+        setImagePreviews((prev) => [...prev, e.target?.result as string]);
       reader.readAsDataURL(file);
-    } else {
-      setImageFile(null);
-      setImagePreview(null);
     }
+  };
+
+  const removeImage = (index: number) => {
+    setImageFiles((prev) => prev.filter((_, i) => i !== index));
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleImageDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      handleImageSelect(file);
-    }
+    addImageFiles(e.dataTransfer.files);
   };
 
   const createMutation = useMutation({
-    mutationFn: async (data: { prompt: string; repo: string; base_branch?: string; image_url?: string }) => {
+    mutationFn: async (data: { prompt: string; repo: string; base_branch?: string; image_urls?: string[] }) => {
       return createTask(data);
     },
     onSuccess: () => {
@@ -97,21 +99,21 @@ export default function Tasks() {
       setRepo('');
       setBaseBranch('main');
       setRepoAutoDetected(false);
-      setImageFile(null);
-      setImagePreview(null);
+      setImageFiles([]);
+      setImagePreviews([]);
     },
   });
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    let image_url: string | undefined;
+    let image_urls: string[] | undefined;
 
-    if (imageFile) {
+    if (imageFiles.length > 0) {
       setUploading(true);
       try {
-        const result = await uploadImage(imageFile);
-        image_url = result.url;
-      } catch (err) {
+        const results = await Promise.all(imageFiles.map((f) => uploadImage(f)));
+        image_urls = results.map((r) => r.url);
+      } catch {
         setUploading(false);
         return;
       }
@@ -122,7 +124,7 @@ export default function Tasks() {
       prompt,
       repo,
       base_branch: baseBranch || undefined,
-      image_url,
+      image_urls,
     });
   };
 
@@ -162,7 +164,7 @@ export default function Tasks() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Image Attachment</Label>
+                  <Label>Image Attachments</Label>
                   <div
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleImageDrop}
@@ -173,32 +175,43 @@ export default function Tasks() {
                       ref={imageInputRef}
                       type="file"
                       accept="image/png,image/jpeg,image/gif,image/webp"
+                      multiple
                       className="hidden"
-                      onChange={(e) => handleImageSelect(e.target.files?.[0] || null)}
+                      onChange={(e) => {
+                        if (e.target.files?.length) addImageFiles(e.target.files);
+                        e.target.value = '';
+                      }}
                     />
-                    {imagePreview ? (
-                      <div className="relative inline-block">
-                        <img
-                          src={imagePreview}
-                          alt="Upload preview"
-                          className="max-h-40 rounded-md border border-border"
-                        />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleImageSelect(null);
-                          }}
-                          className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-0.5"
-                        >
-                          <X className="size-3" />
-                        </button>
+                    {imagePreviews.length > 0 ? (
+                      <div className="flex flex-wrap gap-3 justify-center">
+                        {imagePreviews.map((preview, i) => (
+                          <div key={i} className="relative inline-block">
+                            <img
+                              src={preview}
+                              alt={`Upload preview ${i + 1}`}
+                              className="max-h-32 rounded-md border border-border"
+                            />
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeImage(i);
+                              }}
+                              className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-0.5"
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-center w-20 h-20 rounded-md border-2 border-dashed border-border text-muted-foreground hover:border-muted-foreground/50">
+                          <ImagePlus className="size-6" />
+                        </div>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <ImagePlus className="size-8" />
-                        <span className="text-sm">Drop an image here or click to select</span>
-                        <span className="text-xs">PNG, JPG, GIF, WebP (max 10MB)</span>
+                        <span className="text-sm">Drop images here or click to select</span>
+                        <span className="text-xs">PNG, JPG, GIF, WebP (max 10MB each)</span>
                       </div>
                     )}
                   </div>
@@ -231,7 +244,7 @@ export default function Tasks() {
                 </div>
               </div>
               <Button type="submit" disabled={createMutation.isPending || uploading}>
-                {uploading ? 'Uploading image...' : createMutation.isPending ? 'Creating...' : 'Submit Task'}
+                {uploading ? 'Uploading images...' : createMutation.isPending ? 'Creating...' : 'Submit Task'}
               </Button>
               {createMutation.isError && (
                 <p className="mt-2 text-destructive text-sm">

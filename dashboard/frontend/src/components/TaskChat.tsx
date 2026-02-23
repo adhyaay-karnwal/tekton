@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, CheckCircle, ExternalLink } from 'lucide-react';
-import { listTaskMessages, sendTaskMessage } from '@/lib/api';
+import { Send, CheckCircle, ExternalLink, ImagePlus, X } from 'lucide-react';
+import { listTaskMessages, sendTaskMessage, uploadImage } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,10 @@ interface TaskChatProps {
 export default function TaskChat({ taskId, currentUserEmail, previewUrl }: TaskChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState('');
+  const [chatImage, setChatImage] = useState<File | null>(null);
+  const [chatImagePreview, setChatImagePreview] = useState<string | null>(null);
+  const [chatUploading, setChatUploading] = useState(false);
+  const chatImageRef = useRef<HTMLInputElement>(null);
 
   const { data: messages } = useQuery({
     queryKey: ['task-messages', taskId],
@@ -22,22 +26,52 @@ export default function TaskChat({ taskId, currentUserEmail, previewUrl }: TaskC
     refetchInterval: 3000,
   });
 
+  const handleChatImageSelect = (file: File | null) => {
+    if (file) {
+      setChatImage(file);
+      const reader = new FileReader();
+      reader.onload = (e) => setChatImagePreview(e.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setChatImage(null);
+      setChatImagePreview(null);
+    }
+  };
+
   const sendMutation = useMutation({
-    mutationFn: (content: string) => sendTaskMessage(taskId, content),
+    mutationFn: async ({ content, image_url }: { content: string; image_url?: string }) => {
+      return sendTaskMessage(taskId, content, image_url);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['task-messages', taskId] });
       setMessage('');
+      setChatImage(null);
+      setChatImagePreview(null);
     },
   });
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim()) return;
-    sendMutation.mutate(message.trim());
+    if (!message.trim() && !chatImage) return;
+
+    let image_url: string | undefined;
+    if (chatImage) {
+      setChatUploading(true);
+      try {
+        const result = await uploadImage(chatImage);
+        image_url = result.url;
+      } catch {
+        setChatUploading(false);
+        return;
+      }
+      setChatUploading(false);
+    }
+
+    sendMutation.mutate({ content: message.trim(), image_url });
   };
 
   const handleMarkDone = () => {
-    sendMutation.mutate('__done__');
+    sendMutation.mutate({ content: '__done__' });
   };
 
   const senderColor = (sender: string) => {
@@ -100,18 +134,59 @@ export default function TaskChat({ taskId, currentUserEmail, previewUrl }: TaskC
                 </span>
               </div>
               <p className="whitespace-pre-wrap">{msg.content}</p>
+              {msg.image_url && (
+                <a href={msg.image_url} target="_blank" rel="noopener noreferrer" className="block mt-2">
+                  <img
+                    src={msg.image_url}
+                    alt="Attached image"
+                    className="max-h-48 rounded-md border border-border hover:opacity-90 transition-opacity"
+                  />
+                </a>
+              )}
             </div>
           ))}
         </div>
+        {chatImagePreview && (
+          <div className="mb-2 relative inline-block">
+            <img
+              src={chatImagePreview}
+              alt="Attachment preview"
+              className="max-h-24 rounded-md border border-border"
+            />
+            <button
+              type="button"
+              onClick={() => handleChatImageSelect(null)}
+              className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-0.5"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
         <form onSubmit={handleSend} className="flex gap-2">
+          <input
+            ref={chatImageRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            onChange={(e) => handleChatImageSelect(e.target.files?.[0] || null)}
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            onClick={() => chatImageRef.current?.click()}
+            disabled={sendMutation.isPending || chatUploading}
+          >
+            <ImagePlus className="size-4" />
+          </Button>
           <Input
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Send a follow-up message..."
-            disabled={sendMutation.isPending}
+            disabled={sendMutation.isPending || chatUploading}
             className="flex-1"
           />
-          <Button type="submit" size="icon" disabled={sendMutation.isPending || !message.trim()}>
+          <Button type="submit" size="icon" disabled={sendMutation.isPending || chatUploading || (!message.trim() && !chatImage)}>
             <Send className="size-4" />
           </Button>
         </form>

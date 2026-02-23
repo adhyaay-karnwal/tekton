@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, State};
 use axum::Json;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
@@ -19,6 +19,73 @@ pub type TaskChannels = Arc<DashMap<String, broadcast::Sender<String>>>;
 
 pub fn new_task_channels() -> TaskChannels {
     Arc::new(DashMap::new())
+}
+
+const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
+pub async fn upload_image(
+    _user: AuthUser,
+    State(state): State<crate::AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {e}")))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name != "image" {
+            continue;
+        }
+
+        let content_type = field
+            .content_type()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let ext = match content_type.as_str() {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "Unsupported image type: {content_type}. Allowed: png, jpg, gif, webp"
+                )));
+            }
+        };
+
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::BadRequest(format!("Failed to read upload: {e}")))?;
+
+        if data.len() > MAX_UPLOAD_SIZE {
+            return Err(AppError::BadRequest(format!(
+                "Image too large ({} bytes). Max: {} bytes",
+                data.len(),
+                MAX_UPLOAD_SIZE
+            )));
+        }
+
+        let filename = format!("{}.{}", Uuid::new_v4(), ext);
+        let uploads_dir = format!("{}/uploads", state.config.static_dir);
+        tokio::fs::create_dir_all(&uploads_dir)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to create uploads dir: {e}")))?;
+
+        let file_path = format!("{uploads_dir}/{filename}");
+        tokio::fs::write(&file_path, &data)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to save upload: {e}")))?;
+
+        let url = format!("/uploads/{filename}");
+        return Ok(Json(serde_json::json!({ "url": url })));
+    }
+
+    Err(AppError::BadRequest(
+        "No 'image' field found in upload".into(),
+    ))
 }
 
 pub async fn list_tasks(
@@ -99,7 +166,7 @@ pub async fn create_task(
     let created_by = &user.0.sub;
 
     sqlx::query(
-        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
     )
     .bind(&id)
     .bind(&req.prompt)
@@ -107,6 +174,7 @@ pub async fn create_task(
     .bind(base_branch)
     .bind(&req.parent_task_id)
     .bind(created_by)
+    .bind(&req.image_url)
     .execute(&state.db)
     .await?;
 
@@ -127,12 +195,13 @@ pub async fn create_task(
     let prompt = req.prompt.clone();
     let repo = req.repo.clone();
     let base = base_branch.to_string();
+    let image_url = req.image_url.clone();
     let channels = state.task_channels.clone();
 
     tokio::spawn(async move {
         let agent_name = format!("a-{short}");
         let result = run_task_pipeline(
-            &config, &db, &task_id, &short, &prompt, &repo, &base, tx.clone(),
+            &config, &db, &task_id, &short, &prompt, &repo, &base, image_url.as_deref(), tx.clone(),
         )
         .await;
 
@@ -163,6 +232,7 @@ async fn run_task_pipeline(
     prompt: &str,
     repo: &str,
     base_branch: &str,
+    image_url: Option<&str>,
     tx: broadcast::Sender<String>,
 ) -> Result<(), AppError> {
     let agent_name = format!("a-{short_id}");
@@ -188,10 +258,22 @@ async fn run_task_pipeline(
     shell::agent_exec(&agent_name, &clone_cmd, tx.clone()).await?;
     update_task_field(db, task_id, "branch_name", &branch_name).await?;
 
-    // Step 3: Run Claude (streaming)
+    // Step 3: Copy image and run Claude (streaming)
+    let effective_prompt = if let Some(url) = image_url {
+        copy_image_to_agent(config, &agent_name, url, &tx).await?
+            .map(|remote_path| {
+                format!(
+                    "I've attached a reference image at {remote_path}. Read it first to see what I'm referring to.\n\n{prompt}"
+                )
+            })
+            .unwrap_or_else(|| prompt.to_string())
+    } else {
+        prompt.to_string()
+    };
+
     update_task_status(db, task_id, "running_claude", None).await?;
     log_and_send(db, task_id, &tx, "[STEP] Running Claude...");
-    run_claude_streaming(&agent_name, prompt, tx.clone()).await?;
+    run_claude_streaming(&agent_name, &effective_prompt, tx.clone()).await?;
 
     // Step 3b: Commit any changes
     commit_changes_in_agent(&agent_name, prompt, tx.clone()).await?;
@@ -235,6 +317,45 @@ async fn run_claude_streaming(
         "export CLAUDE_CODE_OAUTH_TOKEN='{oauth_token}' && cd /home/agent/repo && claude --dangerously-skip-permissions --output-format stream-json --verbose -p '{escaped_prompt}'"
     );
     shell::agent_exec_claude_streaming(agent_name, &claude_cmd, tx).await
+}
+
+/// Copy an uploaded image into an agent container.
+/// Returns the remote path inside the container, or None if the copy fails (non-fatal).
+async fn copy_image_to_agent(
+    config: &Config,
+    agent_name: &str,
+    image_url: &str,
+    tx: &broadcast::Sender<String>,
+) -> Result<Option<String>, AppError> {
+    // image_url is like "/uploads/abc-123.png"
+    let filename = image_url
+        .rsplit('/')
+        .next()
+        .unwrap_or("image.png");
+    let local_path = format!("{}{}", config.static_dir, image_url);
+    let remote_path = format!("/home/agent/uploads/{filename}");
+
+    let _ = tx.send(format!("[STEP] Copying image to agent container..."));
+
+    // Create uploads dir in agent
+    if let Err(e) = shell::agent_exec(
+        agent_name,
+        "mkdir -p /home/agent/uploads",
+        tx.clone(),
+    )
+    .await
+    {
+        let _ = tx.send(format!("[WARN] Failed to create uploads dir in agent: {e}"));
+        return Ok(None);
+    }
+
+    // SCP the file
+    if let Err(e) = shell::scp_to_agent(agent_name, &local_path, &remote_path).await {
+        let _ = tx.send(format!("[WARN] Failed to copy image to agent: {e}"));
+        return Ok(None);
+    }
+
+    Ok(Some(remote_path))
 }
 
 async fn commit_changes_in_agent(
@@ -309,11 +430,26 @@ async fn follow_up_loop(
                 return Ok(FollowUpOutcome::Done);
             }
 
+            // Copy image if present, augment prompt
+            let effective_content = if let Some(ref url) = msg.image_url {
+                copy_image_to_agent(config, agent_name, url, tx)
+                    .await?
+                    .map(|remote_path| {
+                        format!(
+                            "I've attached a reference image at {remote_path}. Read it first to see what I'm referring to.\n\n{}",
+                            msg.content
+                        )
+                    })
+                    .unwrap_or_else(|| msg.content.clone())
+            } else {
+                msg.content.clone()
+            };
+
             // Re-invoke Claude with the follow-up message
             let _ = tx.send(format!("[FOLLOWUP] Running Claude with follow-up from {}...", msg.sender));
             update_task_status(db, task_id, "running_claude", None).await?;
 
-            run_claude_streaming(agent_name, &msg.content, tx.clone()).await?;
+            run_claude_streaming(agent_name, &effective_content, tx.clone()).await?;
             commit_changes_in_agent(agent_name, &msg.content, tx.clone()).await?;
 
             // Push and update preview
@@ -542,11 +678,12 @@ pub async fn send_message(
     let sender = &user.0.sub;
 
     sqlx::query(
-        "INSERT INTO task_messages (task_id, sender, content) VALUES (?, ?, ?)",
+        "INSERT INTO task_messages (task_id, sender, content, image_url) VALUES (?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(sender)
     .bind(&req.content)
+    .bind(&req.image_url)
     .execute(&state.db)
     .await?;
 

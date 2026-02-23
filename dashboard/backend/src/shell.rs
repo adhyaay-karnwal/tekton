@@ -199,6 +199,26 @@ fn agent_ip(name: &str) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Internal(format!("Bad format in agent tracking file {path}")))
 }
 
+/// Copy a local file into an agent container via SCP.
+pub async fn scp_to_agent(
+    name: &str,
+    local_path: &str,
+    remote_path: &str,
+) -> Result<(), AppError> {
+    let ip = agent_ip(name)?;
+    run_cmd(
+        "scp",
+        &[
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            local_path,
+            &format!("agent@{ip}:{remote_path}"),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
 /// Run a command inside an agent container via SSH.
 pub async fn agent_exec(
     name: &str,

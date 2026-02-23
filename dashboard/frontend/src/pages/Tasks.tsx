@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listTasks, createTask, classifyPrompt } from '@/lib/api';
+import { listTasks, createTask, classifyPrompt, uploadImage } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { statusVariant } from '@/lib/status';
 import VoiceInput from '@/components/VoiceInput';
+import { ImagePlus, X } from 'lucide-react';
 
 export default function Tasks() {
   const queryClient = useQueryClient();
@@ -24,6 +25,10 @@ export default function Tasks() {
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
   const [repoAutoDetected, setRepoAutoDetected] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const classifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -61,8 +66,30 @@ export default function Tasks() {
     setRepoAutoDetected(false);
   };
 
+  const handleImageSelect = (file: File | null) => {
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onload = (e) => setImagePreview(e.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setImageFile(null);
+      setImagePreview(null);
+    }
+  };
+
+  const handleImageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      handleImageSelect(file);
+    }
+  };
+
   const createMutation = useMutation({
-    mutationFn: createTask,
+    mutationFn: async (data: { prompt: string; repo: string; base_branch?: string; image_url?: string }) => {
+      return createTask(data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       setShowCreate(false);
@@ -70,15 +97,32 @@ export default function Tasks() {
       setRepo('');
       setBaseBranch('main');
       setRepoAutoDetected(false);
+      setImageFile(null);
+      setImagePreview(null);
     },
   });
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    let image_url: string | undefined;
+
+    if (imageFile) {
+      setUploading(true);
+      try {
+        const result = await uploadImage(imageFile);
+        image_url = result.url;
+      } catch (err) {
+        setUploading(false);
+        return;
+      }
+      setUploading(false);
+    }
+
     createMutation.mutate({
       prompt,
       repo,
       base_branch: baseBranch || undefined,
+      image_url,
     });
   };
 
@@ -117,6 +161,48 @@ export default function Tasks() {
                     <VoiceInput onTranscript={handleTranscript} />
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label>Image Attachment</Label>
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleImageDrop}
+                    className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-muted-foreground/50 transition-colors cursor-pointer"
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      className="hidden"
+                      onChange={(e) => handleImageSelect(e.target.files?.[0] || null)}
+                    />
+                    {imagePreview ? (
+                      <div className="relative inline-block">
+                        <img
+                          src={imagePreview}
+                          alt="Upload preview"
+                          className="max-h-40 rounded-md border border-border"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleImageSelect(null);
+                          }}
+                          className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-0.5"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <ImagePlus className="size-8" />
+                        <span className="text-sm">Drop an image here or click to select</span>
+                        <span className="text-xs">PNG, JPG, GIF, WebP (max 10MB)</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -144,8 +230,8 @@ export default function Tasks() {
                   </div>
                 </div>
               </div>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating...' : 'Submit Task'}
+              <Button type="submit" disabled={createMutation.isPending || uploading}>
+                {uploading ? 'Uploading image...' : createMutation.isPending ? 'Creating...' : 'Submit Task'}
               </Button>
               {createMutation.isError && (
                 <p className="mt-2 text-destructive text-sm">

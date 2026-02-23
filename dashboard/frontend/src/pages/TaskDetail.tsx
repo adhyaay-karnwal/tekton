@@ -130,6 +130,18 @@ export default function TaskDetail() {
             <div>
               <span className="text-muted-foreground text-sm">Prompt</span>
               <p className="mt-1 text-sm whitespace-pre-wrap">{task.prompt}</p>
+              {task.image_url && (
+                <div className="mt-2">
+                  <a href={task.image_url} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={task.image_url}
+                      alt="Task reference image"
+                      className="max-w-full rounded-md border border-border hover:opacity-90 transition-opacity"
+                      style={{ maxHeight: '300px', objectFit: 'contain' }}
+                    />
+                  </a>
+                </div>
+              )}
             </div>
             {task.error_message && (
               <>

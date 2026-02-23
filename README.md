@@ -10,7 +10,7 @@ Inspired by [Michael Stapelberg's blog post](https://michael.stapelberg.ch/posts
 
 ## What it does today
 
-- **Background coding agents** — Submit a prompt and repo, Claude works in an isolated NixOS container, pushes a branch, and creates a PR
+- **Background coding agents** — Submit a prompt and repo, an AI agent works in an isolated NixOS container, pushes a branch, and creates a PR
 - **PR preview deployments** — Automatic preview environments for Node.js and Elixir/Phoenix apps via GitHub webhooks
 - **Web dashboard** — Create tasks, monitor live logs via WebSocket, send follow-up prompts, view preview screenshots
 - **Voice input & repo auto-detection** — Speak your task, repo is classified automatically

@@ -271,8 +271,20 @@ async fn run_task_pipeline(
     log_and_send(db, task_id, &tx, "[STEP] Running Claude...");
     run_claude_streaming(&agent_name, &effective_prompt, tx.clone()).await?;
 
-    // Step 3b: Commit any changes
-    commit_changes_in_agent(&agent_name, prompt, tx.clone()).await?;
+    // Step 3b: Commit any changes — retry once if Claude made no edits
+    let made_changes = commit_changes_in_agent(&agent_name, prompt, tx.clone()).await?;
+    if !made_changes {
+        log_and_send(db, task_id, &tx, "[STEP] Re-running Claude — asking it to make actual edits...");
+        let retry_prompt = format!(
+            "You were given this task but made no file changes. You MUST edit the code to accomplish the task. \
+             Do not just analyze — use the Edit or Write tools to make the changes.\n\n{effective_prompt}"
+        );
+        run_claude_streaming(&agent_name, &retry_prompt, tx.clone()).await?;
+        let made_changes_retry = commit_changes_in_agent(&agent_name, prompt, tx.clone()).await?;
+        if !made_changes_retry {
+            log_and_send(db, task_id, &tx, "[WARN] Claude still made no changes after retry.");
+        }
+    }
 
     // Step 3c: Push and create preview
     let mut preview_created = false;
@@ -389,22 +401,40 @@ async fn augment_prompt_with_images(
     ))
 }
 
+/// Check if the agent repo has uncommitted changes.
+async fn agent_has_changes(agent_name: &str) -> Result<bool, AppError> {
+    let ip = shell::agent_ip_public(agent_name)?;
+    let output = tokio::process::Command::new("ssh")
+        .args([
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            &format!("agent@{ip}"),
+            "cd /home/agent/repo && git add -A && git diff --cached --quiet; echo $?",
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to check changes: {e}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // exit code 1 means there are differences (changes exist)
+    Ok(stdout.ends_with('1'))
+}
+
 async fn commit_changes_in_agent(
     agent_name: &str,
     prompt: &str,
     tx: broadcast::Sender<String>,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
+    let has_changes = agent_has_changes(agent_name).await?;
+    if !has_changes {
+        let _ = tx.send("[WARN] Claude made no file changes.".to_string());
+        return Ok(false);
+    }
     let escaped_prompt = prompt.replace('\'', "'\\''");
     let commit_cmd = format!(
-        "cd /home/agent/repo && \
-         git add -A && \
-         if git diff --cached --quiet; then \
-           echo 'No changes to commit'; \
-         else \
-           git commit -m 'Claude: {escaped_prompt}'; \
-         fi"
+        "cd /home/agent/repo && git add -A && git commit -m 'Claude: {escaped_prompt}'"
     );
-    shell::agent_exec(agent_name, &commit_cmd, tx).await
+    shell::agent_exec(agent_name, &commit_cmd, tx).await?;
+    Ok(true)
 }
 
 #[derive(PartialEq)]
@@ -471,7 +501,7 @@ async fn follow_up_loop(
             update_task_status(db, task_id, "running_claude", None).await?;
 
             run_claude_streaming(agent_name, &effective_content, tx.clone()).await?;
-            commit_changes_in_agent(agent_name, &msg.content, tx.clone()).await?;
+            let _ = commit_changes_in_agent(agent_name, &msg.content, tx.clone()).await?;
 
             // Push and update preview
             push_and_preview(config, db, task_id, short_id, agent_name, repo, branch_name, preview_created, tx).await?;

@@ -186,6 +186,11 @@ pub async fn destroy_agent(config: &Config, name: &str) -> Result<String, AppErr
     run_cmd(&config.agent_bin, &["destroy", name]).await
 }
 
+/// Get the container IP for an agent from its tracking file (public for use in tasks.rs).
+pub fn agent_ip_public(name: &str) -> Result<String, AppError> {
+    agent_ip(name)
+}
+
 /// Get the container IP for an agent from its tracking file.
 fn agent_ip(name: &str) -> Result<String, AppError> {
     let path = format!("/var/lib/claude-agents/{name}");

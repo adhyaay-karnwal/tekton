@@ -8,6 +8,27 @@ Today it runs on NixOS with isolated systemd-nspawn containers on bare metal. An
 
 Inspired by [Michael Stapelberg's post on running coding agents in NixOS](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/).
 
+## Why self-hosted
+
+Most AI coding tools are SaaS — you pay per seat, your code leaves your network, and you're locked into one model. Tekton runs on your own hardware:
+
+- **Your infrastructure** — bare metal servers you control, not shared cloud VMs
+- **Your API keys** — bring your own accounts, switch models freely, no markup
+- **No per-seat pricing** — one server handles your whole team
+- **Full isolation** — each agent gets its own NixOS container with no access to other tasks
+- **Reproducible** — the entire stack is defined in Nix, from the host OS to every container
+
+## How it works
+
+```
+1. You submit a task        →  "Add pagination to the users endpoint"
+2. Tekton creates a container  →  Isolated NixOS environment with the repo cloned (~3s)
+3. An AI agent does the work   →  Writes code, runs tests, iterates autonomously
+4. Results are delivered       →  Branch pushed, PR created, live preview deployed
+```
+
+The dashboard shows every task, streams agent logs in real time, and lets you send follow-up prompts mid-task. Agents can also spawn subtasks that run in parallel.
+
 ## What it does today
 
 - **Background coding agents** — Each agent runs in its own isolated NixOS container, works unattended, and pushes results as a PR
@@ -51,6 +72,90 @@ See **[Vision & Roadmap](VISION.md)** for full details on each item.
 - **[Preview Deployments](docs/preview-deployments.md)** — PR preview system, webhook setup, commands reference
 - **[Architecture](docs/architecture.md)** — System design, networking, key decisions
 
+## Prerequisites
+
+- Local machine with [Nix installed](https://nixos.org/download/) (flakes enabled)
+- SSH key pair (`ssh-keygen` if you don't have one)
+- Hetzner dedicated server in rescue mode
+
+## Quick Start
+
+```bash
+# Provision and configure the server (one command)
+./setup.sh
+
+# With Elixir/Phoenix preview support
+./setup.sh --vertex
+```
+
+The script handles everything: network detection, NixOS installation, server configuration, and Claude login. See the [Deployment Guide](docs/deployment-guide.md) for details.
+
+### Agent management
+
+```bash
+# Create an agent (~3 seconds)
+ssh root@YOUR_SERVER_IP 'agent create myagent'
+
+# SSH into the agent
+ssh -J root@YOUR_SERVER_IP agent@<container-ip>
+
+# Run the coding agent
+claude
+claude --dangerously-skip-permissions  # headless mode
+
+# List and destroy
+ssh root@YOUR_SERVER_IP 'agent list'
+ssh root@YOUR_SERVER_IP 'agent destroy myagent'
+
+# Rebuild agent closure after config changes
+ssh root@YOUR_SERVER_IP 'agent build'
+```
+
+### Preview management
+
+```bash
+# Deploy a branch (auto via webhook, or manually)
+ssh root@YOUR_SERVER_IP 'preview create owner/repo branch-name'
+
+# Elixir/Phoenix preview
+ssh root@YOUR_SERVER_IP 'preview create owner/repo branch --type vertex --slug pr-42'
+
+# Monitor and manage
+ssh root@YOUR_SERVER_IP 'preview list'
+ssh root@YOUR_SERVER_IP 'preview logs pr-42 --follow'
+ssh root@YOUR_SERVER_IP 'preview update pr-42'
+ssh root@YOUR_SERVER_IP 'preview destroy pr-42'
+
+# Rebuild preview closures
+ssh root@YOUR_SERVER_IP 'preview build'
+ssh root@YOUR_SERVER_IP 'preview build --type vertex'
+```
+
+See [Preview Deployments](docs/preview-deployments.md) for webhook setup and full reference.
+
+### Host maintenance
+
+```bash
+# Rebuild NixOS after config changes
+ssh root@YOUR_SERVER_IP 'cd /etc/nixos && nixos-rebuild switch'
+
+# Re-authenticate Claude
+ssh root@YOUR_SERVER_IP 'CLAUDE_CONFIG_DIR=/var/secrets/claude claude login'
+ssh root@YOUR_SERVER_IP 'chmod -R a+rX /var/secrets/claude'
+ssh root@YOUR_SERVER_IP 'agent destroy myagent && agent create myagent'  # pick up new creds
+```
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Container fails to start | `journalctl -u container@<name>` on host |
+| SSH asks for password | SSH key not baked in — run `agent build` after config changes, recreate |
+| SSH host key warning | `ssh-keygen -R <container-ip>` |
+| Claude "Invalid API key" | Re-run `claude login` on host, fix permissions, recreate container |
+| Preview returns 502 | App is still building — `preview logs <slug> --follow` |
+| Webhook not triggering | `systemctl status preview-webhook` and check GitHub webhook deliveries |
+
 ## Directory Structure
 
 ```
@@ -83,102 +188,6 @@ tekton/
         │   ├── preview.ts            # Shells out to `preview` CLI
         │   └── config.ts             # Environment variable loading
         └── package.json
-```
-
-## Prerequisites
-
-- Local machine with [Nix installed](https://nixos.org/download/) (flakes enabled)
-- SSH key pair (`ssh-keygen` if you don't have one)
-- Hetzner dedicated server in rescue mode
-
-## Quick Start
-
-### 1. Provision and Setup
-
-```bash
-# Basic setup (agents only)
-./setup.sh
-
-# With Vertex preview support
-./setup.sh --vertex
-```
-
-The script handles everything: network detection, NixOS installation, server configuration, and Claude login. See the [Deployment Guide](docs/deployment-guide.md) for details.
-
-### 2. Use Agent Containers
-
-```bash
-# Create an agent (~3 seconds)
-ssh root@YOUR_SERVER_IP 'agent create myagent'
-
-# SSH into the agent
-ssh -J root@YOUR_SERVER_IP agent@<container-ip>
-
-# Run Claude
-claude
-claude --dangerously-skip-permissions  # headless mode
-
-# List and destroy
-ssh root@YOUR_SERVER_IP 'agent list'
-ssh root@YOUR_SERVER_IP 'agent destroy myagent'
-```
-
-### 3. Preview Deployments
-
-Previews are created automatically via GitHub webhook, or manually:
-
-```bash
-# Deploy a branch
-ssh root@YOUR_SERVER_IP 'preview create owner/repo branch-name'
-
-# Vertex (Elixir/Phoenix) preview
-ssh root@YOUR_SERVER_IP 'preview create owner/repo branch --type vertex --slug pr-42'
-
-# Manage previews
-ssh root@YOUR_SERVER_IP 'preview list'
-ssh root@YOUR_SERVER_IP 'preview logs pr-42 --follow'
-ssh root@YOUR_SERVER_IP 'preview destroy pr-42'
-```
-
-See [Preview Deployments](docs/preview-deployments.md) for webhook setup and full reference.
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Container fails to start | `journalctl -u container@<name>` on host |
-| SSH asks for password | SSH key not baked in — run `agent build` after config changes, recreate |
-| SSH host key warning | `ssh-keygen -R <container-ip>` |
-| Claude "Invalid API key" | Re-run `claude login` on host, fix permissions, recreate container |
-| Preview returns 502 | App is still building — `preview logs <slug> --follow` |
-| Webhook not triggering | `systemctl status preview-webhook` and check GitHub webhook deliveries |
-
-## Quick Reference
-
-```bash
-# Agent management (run on host as root)
-agent create myagent
-agent ssh myagent
-agent list
-agent destroy myagent
-agent build                    # rebuild agent closure after config changes
-
-# Preview management
-preview create org/repo branch
-preview list
-preview logs <slug> --follow
-preview update <slug>
-preview destroy <slug>
-preview build                  # rebuild preview closure
-preview build --type vertex    # rebuild vertex closure
-
-# Host maintenance
-cd /etc/nixos && nixos-rebuild switch
-
-# Re-authenticate Claude
-CLAUDE_CONFIG_DIR=/var/secrets/claude claude login
-chmod -R a+rX /var/secrets/claude
-agent destroy myagent && agent create myagent  # recreate to pick up new creds
 ```
 
 ## References

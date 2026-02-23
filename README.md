@@ -200,3 +200,4 @@ tekton/
 **Related reading:**
 - [Running NixOS from any Linux Distro in systemd-nspawn Containers](https://nixcademy.com/posts/nixos-nspawn/) — Alternative approach using `machinectl` with pre-built images
 - [nspawn-nixos](https://github.com/tfc/nspawn-nixos) — Pre-built NixOS images for systemd-nspawn
+- [Why We Built Our Own Background Agent — Ramp Builders](https://builders.ramp.com/post/why-we-built-our-background-agent) — Ramp's experience building an internal background coding agent (Inspect) that now powers a significant share of their engineering PRs

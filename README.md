@@ -74,6 +74,14 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 
 **Scheduled and recurring tasks.** Cron-like jobs: "every Monday, check for dependency updates", "after every release, update the changelog", "scan for deprecated API usage weekly." Define them in the dashboard or in a `.tekton/schedules` config in the repo.
 
+**Agent tool ecosystem.** Right now agents can only write code. But sometimes they need to run a database migration, query a monitoring dashboard, check Sentry for related errors, or call an internal API. An MCP-style plugin system where you register tools agents can use per-repo or per-org. This is what separates a coding agent from an engineering agent.
+
+**Event-driven tasks.** Beyond scheduled jobs, trigger tasks from external events. A Sentry error creates a task to fix it. A PagerDuty alert spawns a debugging agent. A Slack message kicks off a task. Tekton becomes reactive to what's happening in production, not just what humans remember to ask for.
+
+**Code review as a task type.** Not just writing code, but reviewing it. "Review this PR for security issues." "Check if this PR follows our conventions." Turns agents into reviewers, not just authors. Useful for teams that want a first-pass review before a human looks at it.
+
+**Monorepo support.** Large monorepos need special handling: partial clones, understanding package boundaries, running only affected tests, knowing which team owns which directory. Without this, agents waste time and tokens on irrelevant code.
+
 ### P2: Polish and workflow (quality of life)
 
 **Approval gates.** Before an agent pushes or creates a PR, optionally pause and present the diff for human review. Configurable per repo or per team. Some want full autonomy, others want a checkpoint. The approval can happen in the dashboard, in Slack, or via a GitHub review.
@@ -95,6 +103,8 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 **Org-wide intelligence.** An AI that watches everything happening across the org: all prompts, all task outcomes, all repos. Surfaces patterns humans would miss. "Your team keeps asking agents to fix flaky tests in repo X, the root cause is Y." "This repo generates 3x more failed tasks than average, here's what's different." "Based on the last 50 tasks, agents struggle with Z, consider adding it to the repo's agent memory." Turns the audit log and metrics into actionable insights instead of just data.
 
 **Task and prompt persistence.** Every prompt, response, agent action, and conversation thread is stored in a database with full history. Nothing is lost when a container is destroyed. Tasks are queryable and searchable across the org. This is the foundation that makes agent memory, duplicate detection, org-wide intelligence, and audit logging possible.
+
+**Task forking and checkpoints.** "I liked what the agent did until step 3, fork from there and try a different approach." Save checkpoints during execution so you can branch task history and explore multiple solutions without starting over.
 
 ### Backlog: Community feature requests
 

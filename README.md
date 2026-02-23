@@ -1,132 +1,162 @@
-# NixOS MicroVM Setup for Claude Code Agents on Hetzner
+# Tekton
 
-> Based on [Michael Stapelberg's blog post](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/) on running coding agents in NixOS MicroVMs. Uses [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) for remote NixOS installation and [microvm.nix](https://github.com/astro/microvm.nix) for lightweight VM management.
+> *tekton* (τέκτων) — Greek for "builder"
 
-This repo sets up a Hetzner bare metal server with NixOS and MicroVMs for running Claude Code agents in isolated, ephemeral environments.
+A self-hosted platform for running background AI coding agents on NixOS. Agents run in isolated systemd-nspawn containers on bare metal, with automatic PR preview deployments and a web dashboard for managing tasks.
+
+Inspired by [Michael Stapelberg's blog post](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/) on running coding agents in NixOS. Uses [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) for remote NixOS installation and imperative [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/latest/systemd-nspawn.html) containers for lightweight, instant agent creation.
+
+## What it does
+
+- **Background coding agents** — Submit a prompt and repo, Claude works in an isolated NixOS container, pushes a branch, and creates a PR
+- **PR preview deployments** — Automatic preview environments for Node.js and Elixir/Phoenix apps via GitHub webhooks
+- **Web dashboard** — Create tasks, monitor live logs via WebSocket, send follow-up prompts, view preview screenshots
+- **Voice input & repo auto-detection** — Speak your task, repo is classified automatically
+- **Subtask spawning** — Agents can split work into parallel child tasks
+
+## Documentation
+
+- **[Deployment Guide](docs/deployment-guide.md)** — Full step-by-step setup for a new Hetzner server
+- **[Preview Deployments](docs/preview-deployments.md)** — PR preview system, webhook setup, commands reference
+- **[Architecture](docs/architecture.md)** — System design, networking, key decisions
 
 ## Directory Structure
 
 ```
-nixos-claude/
+tekton/
 ├── README.md
-├── setup.sh                     # Automated setup script
-├── initial-install/             # Used once for nixos-anywhere installation
+├── setup.sh                          # Automated setup script (--vertex for Elixir support)
+├── docs/
+│   ├── deployment-guide.md           # Full deployment walkthrough
+│   ├── preview-deployments.md        # Preview system documentation
+│   └── architecture.md               # System architecture overview
+├── dashboard/
+│   ├── backend/                      # Rust (Axum) API server
+│   └── frontend/                     # React + shadcn/ui dashboard
+├── initial-install/                  # Used once for nixos-anywhere installation
 │   ├── flake.nix
-│   ├── disk-config.nix          # RAID 1 across two SSDs
+│   ├── disk-config.nix               # RAID 1 across two SSDs
 │   └── configuration.nix
-└── server-config/               # Copied to /etc/nixos after install
-    ├── flake.nix
-    ├── configuration.nix
-    ├── microvm-host.nix         # Bridge networking setup
-    └── microvm-agent.nix        # MicroVM definition
+└── server-config/                    # Copied to /etc/nixos after install
+    ├── flake.nix                     # Nix flake (host + all container configs)
+    ├── configuration.nix             # Host server config
+    ├── agent-config.nix              # Agent container config
+    ├── agent.sh                      # Agent lifecycle helper
+    ├── preview-config.nix            # Node.js preview container config
+    ├── vertex-preview-config.nix     # Vertex preview container config
+    ├── preview.sh                    # Preview lifecycle helper
+    └── preview-webhook/              # GitHub webhook service (Fastify/TypeScript)
+        ├── src/
+        │   ├── index.ts              # Webhook server + PR event handler
+        │   ├── github.ts             # Signature verification, event parsing
+        │   ├── preview.ts            # Shells out to `preview` CLI
+        │   └── config.ts             # Environment variable loading
+        └── package.json
 ```
 
 ## Prerequisites
 
 - Local machine with [Nix installed](https://nixos.org/download/) (flakes enabled)
 - SSH key pair (`ssh-keygen` if you don't have one)
-- Hetzner account
+- Hetzner dedicated server in rescue mode
 
-## Setup
+## Quick Start
 
-### Step 1: Provision Hetzner Server
-
-1. Order a dedicated server at [Hetzner Robot](https://robot.hetzner.com) (e.g., AX41-NVMe)
-2. Wait for provisioning, note your server IP
-3. Activate rescue mode: Server → Rescue tab → Activate Linux 64-bit
-4. Reset the server: Reset tab → Hardware reset
-5. Wait a minute for the server to boot into rescue mode
-
-### Step 2: Run the Setup Script
+### 1. Provision and Setup
 
 ```bash
+# Basic setup (agents only)
 ./setup.sh
+
+# With Vertex preview support
+./setup.sh --vertex
 ```
 
-The script will:
-1. **Prompt** for your server IP and SSH public key
-2. **Auto-detect** the gateway, network interface, and prefix length by SSHing into rescue mode
-3. **Install NixOS** via nixos-anywhere (takes ~5-10 minutes)
-4. **Configure the server** with MicroVM support and copy the server config
-5. **Run `claude login`** interactively so you can authenticate via OAuth
+The script handles everything: network detection, NixOS installation, server configuration, and Claude login. See the [Deployment Guide](docs/deployment-guide.md) for details.
 
-No manual editing of configuration files is needed - the script handles all substitutions on temporary copies and leaves the repo files untouched.
-
-## Using MicroVMs
-
-### Start a VM
+### 2. Use Agent Containers
 
 ```bash
-ssh root@YOUR_SERVER_IP 'systemctl start microvm@agent1'
-```
+# Create an agent (~3 seconds)
+ssh root@YOUR_SERVER_IP 'agent create myagent'
 
-### SSH into the VM
+# SSH into the agent
+ssh -J root@YOUR_SERVER_IP agent@<container-ip>
 
-From your local machine (uses SSH jump, no password needed):
-```bash
-ssh -J root@YOUR_SERVER_IP agent@192.168.83.10
-```
-
-### Run Claude
-
-```bash
-# Regular mode
+# Run Claude
 claude
+claude --dangerously-skip-permissions  # headless mode
 
-# Skip all permission prompts (for automation)
-claude --dangerously-skip-permissions
+# List and destroy
+ssh root@YOUR_SERVER_IP 'agent list'
+ssh root@YOUR_SERVER_IP 'agent destroy myagent'
 ```
 
-### Stop the VM
+### 3. Preview Deployments
+
+Previews are created automatically via GitHub webhook, or manually:
 
 ```bash
-ssh root@YOUR_SERVER_IP 'systemctl stop microvm@agent1'
+# Deploy a branch
+ssh root@YOUR_SERVER_IP 'preview create owner/repo branch-name'
+
+# Vertex (Elixir/Phoenix) preview
+ssh root@YOUR_SERVER_IP 'preview create owner/repo branch --type vertex --slug pr-42'
+
+# Manage previews
+ssh root@YOUR_SERVER_IP 'preview list'
+ssh root@YOUR_SERVER_IP 'preview logs pr-42 --follow'
+ssh root@YOUR_SERVER_IP 'preview destroy pr-42'
 ```
 
-## Adding More MicroVMs
-
-Create additional files like `microvm-agent2.nix` with different:
-- `vmName` (e.g., "agent2")
-- `vmIP` (e.g., "192.168.83.11")
-- `vmMAC` (e.g., "02:00:00:00:00:11")
-
-Add to `flake.nix` modules list, then `nixos-rebuild switch` on the server.
+See [Preview Deployments](docs/preview-deployments.md) for webhook setup and full reference.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| VM fails with "permission denied" on start | `chmod 755 /var/secrets/claude` on host |
-| SSH host key warning after VM restart | `ssh-keygen -R 192.168.83.10` |
-| Claude "Invalid API key" in VM | Re-run `claude login` on host with `CLAUDE_CONFIG_DIR=/var/secrets/claude`, fix permissions, restart VM |
-| Claude permission errors in VM | `chown -R microvm:kvm /var/secrets/claude && chmod -R 755 /var/secrets/claude` on host |
-| systemd-networkd-wait-online timeout | Benign - ignore it |
-| Claude hangs on startup | Check credentials exist: `ls /home/agent/.claude/` in VM |
-| Claude shows onboarding screen | Credentials not copied - check `/mnt/claude-creds/` is mounted and has files |
+| Container fails to start | `journalctl -u container@<name>` on host |
+| SSH asks for password | SSH key not baked in — run `agent build` after config changes, recreate |
+| SSH host key warning | `ssh-keygen -R <container-ip>` |
+| Claude "Invalid API key" | Re-run `claude login` on host, fix permissions, recreate container |
+| Preview returns 502 | App is still building — `preview logs <slug> --follow` |
+| Webhook not triggering | `systemctl status preview-webhook` and check GitHub webhook deliveries |
 
 ## Quick Reference
 
 ```bash
-# VM management
-systemctl start microvm@agent1
-systemctl stop microvm@agent1
-systemctl status microvm@agent1
+# Agent management (run on host as root)
+agent create myagent
+agent ssh myagent
+agent list
+agent destroy myagent
+agent build                    # rebuild agent closure after config changes
 
-# View logs
-journalctl -u microvm@agent1 -f
+# Preview management
+preview create org/repo branch
+preview list
+preview logs <slug> --follow
+preview update <slug>
+preview destroy <slug>
+preview build                  # rebuild preview closure
+preview build --type vertex    # rebuild vertex closure
 
-# SSH into VM
-ssh -J root@YOUR_SERVER_IP agent@192.168.83.10
-
-# Rebuild after config changes
+# Host maintenance
 cd /etc/nixos && nixos-rebuild switch
 
-# Re-authenticate Claude (on host)
+# Re-authenticate Claude
 CLAUDE_CONFIG_DIR=/var/secrets/claude claude login
-chown -R microvm:kvm /var/secrets/claude
-chmod -R 755 /var/secrets/claude
-
-# Verify credentials in VM
-ls -la /home/agent/.claude/
-echo $CLAUDE_CONFIG_DIR  # Should show /home/agent/.claude
+chmod -R a+rX /var/secrets/claude
+agent destroy myagent && agent create myagent  # recreate to pick up new creds
 ```
+
+## References
+
+**Used in this project:**
+- [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) — Remote NixOS installation over SSH
+- [NixOS Containers](https://wiki.nixos.org/wiki/NixOS_Containers) — Imperative container management with `nixos-container`
+- [Michael Stapelberg: Running coding agents in NixOS MicroVMs](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/) — Original inspiration
+
+**Related reading:**
+- [Running NixOS from any Linux Distro in systemd-nspawn Containers](https://nixcademy.com/posts/nixos-nspawn/) — Alternative approach using `machinectl` with pre-built images
+- [nspawn-nixos](https://github.com/tfc/nspawn-nixos) — Pre-built NixOS images for systemd-nspawn

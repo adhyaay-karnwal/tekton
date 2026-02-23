@@ -1,13 +1,9 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    microvm = {
-      url = "github:astro/microvm.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, microvm, ... }:
+  outputs = { self, nixpkgs, ... }:
   let
     system = "x86_64-linux";
     pkgs = import nixpkgs {
@@ -15,14 +11,39 @@
       config.allowUnfree = true;  # Required for Claude Code
     };
   in {
+    # Host server configuration
     nixosConfigurations.nixos-server = nixpkgs.lib.nixosSystem {
       inherit system;
       modules = [
         { nixpkgs.pkgs = pkgs; }
-        microvm.nixosModules.host
         ./configuration.nix
-        ./microvm-host.nix
-        ./microvm-agent.nix
+      ];
+    };
+
+    # Agent container configuration (built by `agent build`, used by `agent create`)
+    nixosConfigurations.agent = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        { nixpkgs.pkgs = pkgs; }
+        ./agent-config.nix
+      ];
+    };
+
+    # Preview container configuration (built by `preview build`, used by `preview create`)
+    nixosConfigurations.preview = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        { nixpkgs.pkgs = pkgs; }
+        ./preview-config.nix
+      ];
+    };
+
+    # Vertex preview container configuration (Elixir/Phoenix + React SPA)
+    nixosConfigurations.vertex-preview = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        { nixpkgs.pkgs = pkgs; }
+        ./vertex-preview-config.nix
       ];
     };
   };

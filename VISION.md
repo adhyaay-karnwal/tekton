@@ -14,6 +14,10 @@ Tekton is a self-hosted platform for running background AI coding agents at scal
 
 **Real-Time Collaboration** — Everything happens in real-time via WebSockets. When one person sends a follow-up prompt, everyone watching sees it. When the agent writes code, everyone sees the logs stream. Use Operational Transformation for shared state — a central server determines ordering, which is fine since Tekton is the server. Multiple users can be active in the same task simultaneously.
 
+**Draft / Plan Mode** — Before an agent starts coding, it can run in draft mode: it reads the codebase, proposes a plan (files to change, approach, tradeoffs), and publishes it as a draft. Team members can comment, suggest changes, or approve — just like a PR review, but for the plan itself. Only after approval does the agent start writing code. This prevents wasted compute, catches bad approaches early, and gives the team visibility into what's about to happen. Configurable per task: skip straight to coding for simple fixes, require plan approval for larger changes.
+
+**Duplicate Work Detection** — An AI watcher monitors all active and recent prompts across the org in real-time. When someone submits a task that overlaps with something already in progress or recently completed, Tekton flags it: "Alice is already working on something similar in task X" or "This was addressed 2 days ago in PR #123." This prevents two people from unknowingly asking agents to do the same thing, saves compute, and surfaces opportunities to collaborate. The watcher uses embeddings over prompt + repo + file paths to detect semantic similarity, not just keyword matching.
+
 ### P1 — Multiplier features (high leverage)
 
 **GitHub App Integration** — Beyond webhooks, Tekton becomes a GitHub App. Comment `/tekton fix this` on an issue and it picks up the task. Comment `/tekton address this feedback` on a PR review and it iterates. The conversational threads live both in Tekton and in GitHub — comments sync bidirectionally. This is what turns Tekton from a tool you go to into a tool that meets you where you already work.

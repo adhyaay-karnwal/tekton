@@ -2,9 +2,7 @@
 
 > *tekton* (τέκτων) — Greek for "builder"
 
-Tekton is a self-hosted platform for running background AI coding agents at scale. The goal is infrastructure that builds things for you — not a chatbot you talk to, but a system where you describe what you want, and agents write the code, open the PR, and deploy a preview.
-
-Today it runs on NixOS with isolated systemd-nspawn containers on bare metal. An agent spins up in ~3 seconds, does the work unattended, and creates a PR with a live preview. A web dashboard lets you create tasks, watch logs in real time, and send follow-ups.
+Tekton is a self-hosted platform for running background AI coding agents at scale. The goal is infrastructure that builds things for you — not a chatbot you talk to, but a system where you describe what you want, and agents write the code, open the PR, and deploy a preview. It runs on NixOS with isolated systemd-nspawn containers on bare metal.
 
 Inspired by [Michael Stapelberg's post on running coding agents in NixOS](https://michael.stapelberg.ch/posts/2026-02-01-coding-agent-microvm-nix/).
 
@@ -21,17 +19,16 @@ Most AI coding tools are SaaS — you pay per seat, your code leaves your networ
 ## How it works
 
 ```
-1. You submit a task        →  "Add pagination to the users endpoint"
-2. Tekton creates a container  →  Isolated NixOS environment with the repo cloned (~3s)
-3. An AI agent does the work   →  Writes code, runs tests, iterates autonomously
-4. Results are delivered       →  Branch pushed, PR created, live preview deployed
+1. You submit a task            "Add pagination to the users endpoint"
+2. Tekton spins up a container  Isolated NixOS environment with the repo cloned (~3s)
+3. An AI agent does the work    Writes code, runs tests, iterates autonomously
+4. Results are delivered        Branch pushed, PR created, live preview deployed
 ```
 
-The dashboard shows every task, streams agent logs in real time, and lets you send follow-up prompts mid-task. Agents can also spawn subtasks that run in parallel.
+You can watch it happen — the dashboard streams agent logs in real time and lets you send follow-up prompts mid-task.
 
 ## What it does today
 
-- **Background coding agents** — Each agent runs in its own isolated NixOS container, works unattended, and pushes results as a PR
 - **PR preview deployments** — Automatic preview environments for Node.js and Elixir/Phoenix apps via GitHub webhooks
 - **Web dashboard** — Create tasks, monitor live logs via WebSocket, send follow-up prompts, view preview screenshots
 - **Voice input & repo auto-detection** — Speak your task, repo is classified automatically
@@ -76,7 +73,7 @@ See **[Vision & Roadmap](VISION.md)** for full details on each item.
 
 - Local machine with [Nix installed](https://nixos.org/download/) (flakes enabled)
 - SSH key pair (`ssh-keygen` if you don't have one)
-- Hetzner dedicated server in rescue mode
+- A dedicated server in rescue mode (tested on Hetzner, should work on any provider with standard Linux rescue)
 
 ## Quick Start
 

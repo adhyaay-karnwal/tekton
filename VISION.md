@@ -26,6 +26,8 @@ Tekton is a self-hosted platform for running background AI coding agents at scal
 
 **Queue Management & Priority** — A proper job queue with priority levels (urgent, normal, background), fair scheduling across users, and preemption — high-priority tasks can bump low-priority ones when capacity is constrained. Visibility into queue depth and wait times.
 
+**Task Scope Guardrails** — Not everything should be requestable as a task. Define per-org and per-repo policies that restrict what agents are allowed to do: for example, prevent agents from pushing directly to protected branches, running destructive commands, or performing operations outside the repo scope. Admins configure allowlists and denylists for agent capabilities (push, deploy, delete, etc.), and users see clear feedback when a request is blocked and why. This prevents accidental damage and gives teams confidence to grant broader access without fear of unintended side effects.
+
 **Cost Tracking & Budgets** — With multiple API providers and elastic infrastructure, cost visibility is essential. Track token usage per task, compute time per container, and aggregate by user and team. Org admins set spending limits and get alerts. The dashboard shows burn rate, cost per merged PR, and trends over time.
 
 ### P2 — Polish & workflow (quality of life)

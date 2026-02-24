@@ -330,7 +330,7 @@ cmd_create() {
     local domain="${PREVIEW_DOMAIN:-preview.example.com}"
 
     # Get GitHub token: prefer webhook's /internal/token endpoint (supports
-    # both PAT and GitHub App auth), fall back to GITHUB_TOKEN env var.
+    # PAT auth), fall back to GITHUB_TOKEN env var.
     local github_token=""
     local webhook_port="${WEBHOOK_PORT:-3100}"
     local token_response
@@ -513,7 +513,7 @@ cmd_update() {
 
     info "Updating preview '$slug' (type=$type, pulling latest code and rebuilding)..."
 
-    # Refresh the GitHub token in the container's git config (GitHub App tokens expire after ~1 hour)
+    # Refresh the GitHub token in the container's git config (GitHub tokens may expire)
     local github_token=""
     local webhook_port="${WEBHOOK_PORT:-3100}"
     local token_response

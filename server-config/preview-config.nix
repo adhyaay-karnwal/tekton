@@ -51,7 +51,7 @@
       APP_DIR="/home/preview/app"
 
       # On container restart, skip setup if the app is already built.
-      # This avoids git fetch with expired GitHub App tokens.
+      # This avoids git fetch with expired tokens.
       # Explicit rebuilds go through 'preview update' which clears the marker.
       if [ -d "$APP_DIR/node_modules" ] && [ ! -f /tmp/force-rebuild ]; then
         echo "App already built, skipping setup (container restart)."

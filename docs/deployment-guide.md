@@ -176,17 +176,17 @@ The Caddy configuration may need a plugin hash that's unknown on first build. Th
 
 ## Updating the Server
 
-After making changes to files in `server-config/`:
+After making changes to files in `server-config/`, use `deploy.sh` or copy individual files. **Do not copy `configuration.nix` or `agent-config.nix` — they have placeholders.**
 
 ```bash
-# Copy updated files to the server
-scp -r server-config/. root@YOUR_SERVER_IP:/etc/nixos/
+# Copy specific updated files (NOT configuration.nix or agent-config.nix)
+scp server-config/preview.sh server-config/agent.sh server-config/flake.nix root@YOUR_SERVER_IP:/etc/nixos/
 
 # Rebuild on the server
 ssh root@YOUR_SERVER_IP 'cd /etc/nixos && nixos-rebuild switch'
 ```
 
-**Important**: Never `scp` the local `configuration.nix` directly — it has placeholder values (`YOUR.SERVER.IP.HERE`) that will break networking. Either edit on the server, or use `setup.sh` for a fresh install.
+**Important**: Never `scp` template NixOS configs (`configuration.nix`, `agent-config.nix`) directly — they have placeholder values that `setup.sh` substitutes with real values. Key placeholders include `YOUR.SERVER.IP.HERE`, `YOUR.GATEWAY.IP.HERE`, `dashboard.YOUR_DOMAIN`, `YOUR_GIT_EMAIL`, and SSH key placeholders (`ssh-ed25519 AAAA... your-key-here`, `ssh-ed25519 AAAA... root-key-here`). Either edit on the server, or use `setup.sh` for a fresh install.
 
 To update the webhook after code changes:
 

@@ -127,7 +127,7 @@ Browser: https://42.preview.example.com/api/users
 
 | File | Flake output | Purpose |
 |------|-------------|---------|
-| `server-config/agent-config.nix` | `nixosConfigurations.agent` | Agent container (Claude Code + dev tools) |
+| `server-config/agent-config.nix` | `nixosConfigurations.agent` | Agent container (Claude Code + dev tools). Has placeholders: `YOUR_GIT_EMAIL`, SSH key placeholders |
 | `server-config/preview-config.nix` | `nixosConfigurations.preview` | Node.js preview container |
 | `server-config/vertex-preview-config.nix` | `nixosConfigurations.vertex-preview` | Vertex preview container (Elixir + React) |
 

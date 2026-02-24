@@ -116,10 +116,10 @@ deploy_webhook() {
 
 deploy_nix() {
     info "Deploying NixOS configs..."
-    # Copy everything EXCEPT configuration.nix (has placeholders)
+    # Copy everything EXCEPT configuration.nix and agent-config.nix (have placeholders)
     $SSH "
         cd ${REMOTE_SRC}/server-config && \
-        for f in agent-config.nix agent.sh preview-config.nix vertex-preview-config.nix preview.sh flake.nix; do
+        for f in agent.sh preview-config.nix vertex-preview-config.nix preview.sh flake.nix; do
             if [ -f \"\$f\" ]; then
                 cp \"\$f\" /etc/nixos/\"\$f\"
             fi

@@ -31,9 +31,9 @@ impl Config {
             google_client_secret: env::var("GOOGLE_CLIENT_SECRET")?,
             google_redirect_uri: env::var("GOOGLE_REDIRECT_URI")?,
             allowed_domain: env::var("ALLOWED_DOMAIN")
-                .unwrap_or_else(|_| "lambdaclass.com".into()),
+                .unwrap_or_else(|_| "example.com".into()),
             preview_domain: env::var("PREVIEW_DOMAIN")
-                .unwrap_or_else(|_| "hipermegared.link".into()),
+                .unwrap_or_else(|_| "example.com".into()),
             allowed_repos: env::var("ALLOWED_REPOS")
                 .unwrap_or_default()
                 .split(',')

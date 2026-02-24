@@ -42,4 +42,4 @@ echo "=== Checking status ==="
 ssh "$SERVER" "systemctl status dashboard --no-pager" || true
 
 echo ""
-echo "=== Done! Dashboard should be available at https://dashboard.hipermegared.link ==="
+echo "=== Done! Dashboard should be available at your configured domain ==="

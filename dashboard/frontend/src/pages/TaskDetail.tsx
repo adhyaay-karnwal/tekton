@@ -220,6 +220,15 @@ export default function TaskDetail() {
           <LogViewer taskId={id!} onConnectionChange={onConnectionChange} />
         </CardContent>
       </Card>
+
+      <Card className="mt-6">
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">Preview Logs</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <LogViewer previewSlug={`t-${id!.slice(0, 6)}`} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

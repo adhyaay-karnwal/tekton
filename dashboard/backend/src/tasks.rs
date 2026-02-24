@@ -327,7 +327,10 @@ async fn run_task_pipeline(
     // Step 3c: Push and create preview
     let mut preview_created = false;
     let mut branch_pushed = false;
-    push_and_preview(config, db, task_id, short_id, &agent_name, repo, &branch_name, base_branch, &mut branch_pushed, &mut preview_created, git_id, &tx).await?;
+    let pushed = push_and_preview(config, db, task_id, short_id, &agent_name, repo, &branch_name, base_branch, &mut branch_pushed, &mut preview_created, git_id, &tx).await?;
+    if pushed {
+        save_system_message(db, task_id, "Changes pushed and preview updated ✓").await?;
+    }
 
     // Step 4: Follow-up loop
     follow_up_loop(config, db, task_id, short_id, &agent_name, repo, &branch_name, base_branch, &mut branch_pushed, &mut preview_created, git_id, &tx).await?;
@@ -401,6 +404,16 @@ async fn save_claude_response_as_message(
     .bind(&display_text)
     .execute(db)
     .await?;
+    Ok(())
+}
+
+/// Save a system/status message to the chat so it appears inline in the UI.
+async fn save_system_message(db: &SqlitePool, task_id: &str, content: &str) -> Result<(), AppError> {
+    sqlx::query("INSERT INTO task_messages (task_id, sender, content) VALUES (?, 'system', ?)")
+        .bind(task_id)
+        .bind(content)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -545,7 +558,7 @@ async fn follow_up_loop(
         // Check for new messages IMMEDIATELY (no sleep before first check)
         // Filter out claude's own messages so we only process user messages
         let new_messages: Vec<TaskMessage> = sqlx::query_as::<_, TaskMessage>(
-            "SELECT * FROM task_messages WHERE task_id = ? AND id > ? AND sender != 'claude' ORDER BY id ASC",
+            "SELECT * FROM task_messages WHERE task_id = ? AND id > ? AND sender NOT IN ('claude', 'system') ORDER BY id ASC",
         )
         .bind(task_id)
         .bind(last_seen_id)
@@ -579,6 +592,7 @@ async fn follow_up_loop(
         let combined_prompt = combined_parts.join("\n\n---\n\n");
 
         // Run Claude with --continue to maintain conversation context
+        save_system_message(db, task_id, "Running Claude with your follow-up...").await?;
         update_task_status(db, task_id, "running_claude", None).await?;
         let _ = tx.send("[FOLLOWUP] Running Claude with follow-up...".to_string());
 
@@ -600,7 +614,10 @@ async fn follow_up_loop(
         let _ = commit_changes_in_agent(agent_name, &combined_parts[0], tx.clone()).await?;
 
         // Push and update preview
-        push_and_preview(config, db, task_id, short_id, agent_name, repo, branch_name, base_branch, branch_pushed, preview_created, git_id, tx).await?;
+        let pushed = push_and_preview(config, db, task_id, short_id, agent_name, repo, branch_name, base_branch, branch_pushed, preview_created, git_id, tx).await?;
+        if pushed {
+            save_system_message(db, task_id, "Changes pushed and preview updated ✓").await?;
+        }
 
         update_task_status(db, task_id, "awaiting_followup", None).await?;
         let _ = tx.send("[STATUS] Waiting for more follow-up messages...".to_string());
@@ -828,7 +845,7 @@ async fn push_and_preview(
     preview_created: &mut bool,
     git_id: &GitIdentity,
     tx: &broadcast::Sender<String>,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     // Determine base_ref for diff
     let base_ref = if *branch_pushed {
         format!("origin/{branch_name}")
@@ -843,8 +860,10 @@ async fn push_and_preview(
 
     if file_changes.additions.is_empty() && file_changes.deletions.is_empty() {
         log_and_send(db, task_id, tx, "[WARN] No file changes to push.");
-        return Ok(());
+        return Ok(false);
     }
+
+    save_system_message(db, task_id, "Deploying changes to preview...").await?;
 
     log_and_send(
         db, task_id, tx,
@@ -932,7 +951,7 @@ async fn push_and_preview(
         take_screenshot(&config2, &db2, &task_id2, &preview_slug2, &preview_url2, &tx2).await;
     });
 
-    Ok(())
+    Ok(true)
 }
 
 async fn take_screenshot(

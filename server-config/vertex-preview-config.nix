@@ -1,18 +1,44 @@
 # NixOS configuration for Vertex preview containers (Elixir/Phoenix + React SPA)
-# Built via: nix build /etc/nixos#nixosConfigurations.vertex-preview.config.system.build.toplevel
-# Used by: nixos-container create <name> --system-path <closure>
+# This file lives in the vertex repo and is fetched by tekton at preview-create time.
+# Built by: tekton's preview.sh using nix build --impure --expr
 #
-# Environment flow:
-# 1. `preview create --type vertex` writes /etc/preview.env into the container filesystem
-# 2. setup-vertex reads it to clone repo, build backend + frontend, run migrations
-# 3. vertex-backend reads it to run the Phoenix server
-# 4. vertex-frontend serves the built static files
+# system.build.previewMeta  — read by tekton before container start (routing, services, DB)
+# environment.etc."preview-meta.json"  — same JSON available inside the running container
 { config, lib, pkgs, ... }:
 
 let
   erlang = pkgs.erlang_27;
   beamPackages = pkgs.beam.packagesWith erlang;
   elixir = beamPackages.elixir_1_18;
+
+  meta = {
+    setupService = "setup-vertex";
+    appServices  = [ "vertex-backend" "vertex-frontend-admin" "vertex-frontend-foods" "vertex-frontend-landing" ];
+    database     = "container";
+    routes       = [
+      { path = "/api/*";      port = 4000; }
+      { path = "/websocket";  port = 4000; }
+      { path = "/longpoll/*"; port = 4000; }
+      { path = "/admin/*";    port = 3000; stripPrefix = true; }
+      { path = "/";           port = 3001; }
+    ];
+    hostSecrets  = [ "POSTMARK_API_KEY" "GOOGLE_CLIENT_ID" "GOOGLE_CLIENT_SECRET" ];
+    extraHosts   = [
+      {
+        prefix = "landing";
+        routes = [ { path = "/"; port = 3002; } ];
+      }
+      {
+        prefix = "app.landing";
+        routes = [
+          { path = "/api/*";      port = 4000; }
+          { path = "/websocket";  port = 4000; }
+          { path = "/longpoll/*"; port = 4000; }
+          { path = "/";           port = 3001; }
+        ];
+      }
+    ];
+  };
 in
 {
   boot.isContainer = true;
@@ -59,7 +85,7 @@ in
     before = [ "vertex-backend.service" "vertex-frontend-admin.service" "vertex-frontend-foods.service" "vertex-frontend-landing.service" ];
     path = [
       pkgs.bash pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused
-      pkgs.git erlang elixir pkgs.nodejs_22 pkgs.pnpm pkgs.gcc pkgs.gnumake
+      pkgs.git erlang elixir pkgs.nodejs_22 pkgs.pnpm pkgs.gcc pkgs.gnumake pkgs.openssl
     ];
     serviceConfig = {
       Type = "oneshot";
@@ -80,6 +106,32 @@ in
       source /etc/preview.env
       set +a
 
+      SECRETS_FILE="/home/preview/.vertex-secrets.env"
+
+      # Generate stable per-preview secrets on first run (persist across restarts)
+      if [ ! -f "$SECRETS_FILE" ]; then
+        echo "Generating preview secrets..."
+        {
+          echo "SECRET_KEY_BASE=$(${pkgs.openssl}/bin/openssl rand -hex 64)"
+          echo "JWT_SECRET=$(${pkgs.openssl}/bin/openssl rand -hex 64)"
+          echo "DATABASE_ENCRYPTION_KEY=$(${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\n')"
+          echo "DATABASE_URL=postgresql://vertex@localhost:5432/vertex"
+          echo "REDIS_URL=redis://localhost:6379"
+          echo "PORT=4000"
+          echo "DEPLOY_ENV=testing"
+          echo "PHX_HOST=''${PREVIEW_HOST}"
+          echo "FRONTEND_URL=''${PREVIEW_URL}"
+          echo "CORS_ALLOWED_ORIGINS=''${PREVIEW_URL},https://app.landing-''${PREVIEW_HOST}"
+        } > "$SECRETS_FILE"
+        chmod 600 "$SECRETS_FILE"
+      fi
+
+      # Load generated secrets first, then re-source preview.env so forwarded hostSecrets win
+      set -a
+      source "$SECRETS_FILE"
+      source /etc/preview.env
+      set +a
+
       APP_DIR="/home/preview/app"
 
       # On container restart, skip setup entirely if the app is already built.
@@ -91,14 +143,18 @@ in
       fi
       rm -f /tmp/force-rebuild
 
+      # Build authenticated URL from the root-only token file
+      PREVIEW_TOKEN=$(cat /etc/preview-token 2>/dev/null || echo "")
+      AUTHED_URL=$(echo "$PREVIEW_REPO_URL" | sed "s|https://|https://x-access-token:$PREVIEW_TOKEN@|")
+
       if [ -d "$APP_DIR/.git" ]; then
         echo "Updating existing repo..."
-        cd "$APP_DIR"
-        ${pkgs.git}/bin/git fetch origin
-        ${pkgs.git}/bin/git reset --hard "origin/$PREVIEW_BRANCH"
+        ${pkgs.git}/bin/git -C "$APP_DIR" remote set-url origin "$AUTHED_URL"
+        ${pkgs.git}/bin/git -C "$APP_DIR" fetch origin
+        ${pkgs.git}/bin/git -C "$APP_DIR" reset --hard "origin/$PREVIEW_BRANCH"
       else
         echo "Cloning $PREVIEW_REPO_URL (branch: $PREVIEW_BRANCH)..."
-        ${pkgs.git}/bin/git clone --depth 1 --branch "$PREVIEW_BRANCH" --single-branch "$PREVIEW_REPO_URL" "$APP_DIR"
+        ${pkgs.git}/bin/git clone --depth 1 --branch "$PREVIEW_BRANCH" --single-branch "$AUTHED_URL" "$APP_DIR"
         cd "$APP_DIR"
       fi
 
@@ -181,7 +237,8 @@ in
       Type = "simple";
       User = "preview";
       WorkingDirectory = "/home/preview/app";
-      EnvironmentFile = "/etc/preview.env";
+      # Secrets file loaded first; /etc/preview.env overrides any key present in both
+      EnvironmentFile = [ "/home/preview/.vertex-secrets.env" "/etc/preview.env" ];
       ExecStart = "/home/preview/app/backend/_build/prod/rel/vertex/bin/vertex start";
       Restart = "on-failure";
       RestartSec = 5;
@@ -225,12 +282,12 @@ in
     description = "Vertex landing page (port 3002)";
     after = [ "setup-vertex.service" ];
     requires = [ "setup-vertex.service" ];
-    path = [ pkgs.bash pkgs.coreutils pkgs.nodejs_22 ];
+    path = [ pkgs.bash pkgs.coreutils pkgs.static-web-server ];
     serviceConfig = {
       Type = "simple";
       User = "preview";
       WorkingDirectory = "/home/preview/app/landings/restolia";
-      ExecStart = "${pkgs.nodejs_22}/bin/npx serve -s dist -l 3002";
+      ExecStart = "${pkgs.static-web-server}/bin/static-web-server --port 3002 --root dist --page-fallback dist/index.html";
       Restart = "on-failure";
       RestartSec = 5;
     };
@@ -256,10 +313,10 @@ in
 
   users.users.root = {
     password = "changeme";
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAA... your-key-here"
-    ];
   };
+
+  system.build.previewMeta = pkgs.writeText "preview-meta.json" (builtins.toJSON meta);
+  environment.etc."preview-meta.json".text = builtins.toJSON meta;
 
   # Packages available in vertex preview containers
   environment.systemPackages = with pkgs; [

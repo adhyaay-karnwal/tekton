@@ -36,68 +36,6 @@ The dashboard streams agent logs in real time and lets you send follow-up prompt
 - **Voice input and repo auto-detection.** Speak your task, the repo is classified automatically.
 - **Subtask spawning.** Agents can split work into parallel child tasks.
 
-## Getting started
-
-```bash
-./setup.sh
-```
-
-One command handles everything: NixOS installation, server configuration, dashboard + webhook builds, and Claude login. See the [Deployment Guide](docs/deployment-guide.md) for prerequisites and full walkthrough.
-
-### Agent management
-
-```bash
-# Create an agent (~3 seconds)
-ssh root@YOUR_SERVER_IP 'agent create myagent'
-
-# SSH into the agent
-ssh -J root@YOUR_SERVER_IP agent@<container-ip>
-
-# Run the coding agent
-claude
-claude --dangerously-skip-permissions  # headless mode
-
-# List and destroy
-ssh root@YOUR_SERVER_IP 'agent list'
-ssh root@YOUR_SERVER_IP 'agent destroy myagent'
-
-# Rebuild agent closure after config changes
-ssh root@YOUR_SERVER_IP 'agent build'
-```
-
-### Preview management
-
-```bash
-# Deploy a branch (auto via webhook, or manually)
-ssh root@YOUR_SERVER_IP 'preview create owner/repo branch-name'
-
-# Elixir/Phoenix preview
-ssh root@YOUR_SERVER_IP 'preview create owner/repo branch --type vertex --slug pr-42'
-
-# Monitor and manage
-ssh root@YOUR_SERVER_IP 'preview list'
-ssh root@YOUR_SERVER_IP 'preview logs pr-42 --follow'
-ssh root@YOUR_SERVER_IP 'preview update pr-42'
-ssh root@YOUR_SERVER_IP 'preview destroy pr-42'
-
-# Rebuild preview closures
-ssh root@YOUR_SERVER_IP 'preview build'
-ssh root@YOUR_SERVER_IP 'preview build --type vertex'
-```
-
-See [Preview Deployments](docs/preview-deployments.md) for webhook setup and full reference.
-
-### Deploying changes
-
-```bash
-./deploy.sh <server-ip>              # Deploy everything
-./deploy.sh <server-ip> dashboard    # Dashboard only
-./deploy.sh <server-ip> webhook      # Preview webhook only
-./deploy.sh <server-ip> nix          # NixOS configs only
-```
-
-See the [Deployment Guide](docs/deployment-guide.md) for details, troubleshooting, and server reference.
-
 ## Roadmap
 
 ### Roadmap overview
@@ -114,45 +52,6 @@ See the [Deployment Guide](docs/deployment-guide.md) for details, troubleshootin
 - **Browser-first execution model.** Tekton is intentionally browser-first for shared visibility, approvals, auditability, and zero local setup; IDE-native convenience is a deliberate tradeoff, not a roadmap miss.
 - **Operational clarity.** Queue behavior, capacity, costs, and failure modes must be visible and predictable.
 - **Composable standards.** Favor interoperable repo-local configuration (`AGENTS.md`-style) over closed one-off config.
-
-### Competitor Gap Snapshot
-
-| Capability | Competitor signal | Tekton status | Priority | Decision |
-|------------|-------------------|---------------|----------|----------|
-| IDE-native daily workflow (autocomplete + inline edits + agent in editor) | Continue/Cline/Copilot are strong in-editor | Intentionally not core (browser-first) | N/A | **Do not copy now**: win on shared browser workflows + governance |
-| Policy engine (repo/org guardrails, approvals, restricted actions) | Copilot, Codex, Cline emphasize explicit permissioning | Planned (roadmap) | P0 | **Copy + improve**: policy presets + per-repo overrides |
-| Fine-grained per-tool auto-approval UX | Cline-style safe-vs-risky command behavior | Not explicit | P0/P1 | **Copy + improve**: explicit policy prompts + risk tiers + audit trail |
-| Approval ergonomics (approve with constraints) | Advanced agents support nuanced human gating | Not explicit | P1 | **Improve**: scoped approvals by files/tools/operations |
-| Network egress controls (allowlist/denylist) | Enterprise agents push sandbox network controls | Planned (roadmap) | P0 | **Copy**: ship default-safe profiles first |
-| Pre-task repo intelligence (`ask` + planning context) | Devin Ask flow, planning-first tools | Planned (roadmap) | P0 | **Improve**: couple analysis + plan approval in one flow |
-| Collaborative draft/plan approval workflow | Devin/OpenHands style planning loops | Planned (roadmap) | P0/P1 | **Improve**: comments/approvals tied to execution gates |
-| Playbooks from successful runs | Devin advanced workflow + team automation products | Planned (templates/playbooks) | P1 | **Improve**: auto-generate playbooks from completed tasks |
-| Batch execution across repos/branches | Common in platform-oriented agent tools | Partial concept | P1/P2 | **Copy + improve**: queue-aware, resumable batch jobs |
-| Workflow-native integrations (GitHub/Slack/Linear/Jira) | Copilot/Factory/Codegen focus on in-workflow triggers | GitHub-focused roadmap | P2 | **Improve**: bi-directional state/comment sync |
-| Portable repo-level agent config (`AGENTS.md`-style) | Open agent ecosystem converging on repo-scoped config | Planned concept (skills) | P1 | **Copy**: adopt compatible schema + migration path |
-| Multi-agent orchestration for one task | OpenHands/research agents and commercial products explore this | Planned (roadmap) | P2 | **Improve**: comparison UI + merge strategy |
-| Cost controls and budgets by org/team/user | Standard in team/enterprise agent platforms | Planned (roadmap) | P1 | **Copy**: hard limits + alerts + cost attribution |
-| Observability and auditability | Enterprise expectation across platforms | Planned (roadmap) | P1/P2 | **Copy + improve**: audit trail + quality KPIs tied to repos |
-| Trajectory inspection + evaluation tooling | SWE-agent and eval-first teams emphasize run trace analysis | Not explicit | P1 | **Copy + improve**: trace viewer + replay + quality metrics |
-| Deterministic task replay | Reliability/compliance teams need reproducible runs | Not explicit | P1 | **Improve**: snapshot inputs/runtime/tool versions for exact replay |
-| Secrets provenance + leak detection | Enterprise platforms require stronger secret governance | Not explicit | P0/P1 | **Copy + improve**: source tracking + redaction + exfil alerts |
-| Multi-runtime ecosystem breadth | OpenHands-style runtime flexibility (local/docker/remote) | Partial (nspawn-centric) | P2/P3 | **Improve**: runtime adapter interface with policy parity |
-
-### Why Tekton Is Useful (Even With Strong Competitors)
-
-The goal is not to beat every coding agent on every axis. The goal is to win for teams that need controllable, self-hosted background agents with predictable operations.
-
-- **Trust and control over autonomy theater.** Teams can adopt AI coding workflows with explicit guardrails (policy, approvals, egress controls) instead of opaque defaults.
-- **Vendor independence.** BYO model/provider strategy prevents lock-in and keeps model choice flexible as quality and pricing change.
-- **Lower long-term unit economics.** For team usage, self-hosted infrastructure + provider flexibility can reduce cost per merged PR versus seat-priced SaaS.
-- **Data locality and compliance fit.** Sensitive repositories and execution paths stay in customer-controlled environments.
-- **Standardized execution environments.** Reproducible runtime + policy profiles reduce variance and make outcomes more predictable.
-- **Compounding institutional memory.** Plans, logs, outcomes, and playbooks become reusable organizational knowledge.
-- **Operational leverage at team scale.** Batch/recurrent/event-driven task execution converts one-off prompting into repeatable automation.
-- **Auditability and accountability.** Full action history clarifies who asked what, what ran, what was blocked, and why.
-- **Private-system integration upside.** Self-hosted architecture is better suited for internal APIs, tooling, and security controls that SaaS tools cannot access easily.
-
-If Tekton executes on these dimensions, it does not need to out-market incumbents on generic "agent coding UX" to be a strong product.
 
 ### Phase Exit Criteria
 
@@ -298,6 +197,45 @@ If Tekton executes on these dimensions, it does not need to out-market incumbent
 **Task forking and checkpoints.** Save checkpoints during execution. Fork from any point to try a different approach without starting over. Explore multiple solutions in parallel.
 
 **Merge conflict resolution.** Detect overlapping file changes before they happen, serialize agents touching the same areas, and when conflicts do occur, spawn a resolution agent that rebases and fixes them.
+
+### Competitor Gap Snapshot
+
+| Capability | Competitor signal | Tekton status | Priority | Decision |
+|------------|-------------------|---------------|----------|----------|
+| IDE-native daily workflow (autocomplete + inline edits + agent in editor) | Continue/Cline/Copilot are strong in-editor | Intentionally not core (browser-first) | N/A | **Do not copy now**: win on shared browser workflows + governance |
+| Policy engine (repo/org guardrails, approvals, restricted actions) | Copilot, Codex, Cline emphasize explicit permissioning | Planned (roadmap) | P0 | **Copy + improve**: policy presets + per-repo overrides |
+| Fine-grained per-tool auto-approval UX | Cline-style safe-vs-risky command behavior | Not explicit | P0/P1 | **Copy + improve**: explicit policy prompts + risk tiers + audit trail |
+| Approval ergonomics (approve with constraints) | Advanced agents support nuanced human gating | Not explicit | P1 | **Improve**: scoped approvals by files/tools/operations |
+| Network egress controls (allowlist/denylist) | Enterprise agents push sandbox network controls | Planned (roadmap) | P0 | **Copy**: ship default-safe profiles first |
+| Pre-task repo intelligence (`ask` + planning context) | Devin Ask flow, planning-first tools | Planned (roadmap) | P0 | **Improve**: couple analysis + plan approval in one flow |
+| Collaborative draft/plan approval workflow | Devin/OpenHands style planning loops | Planned (roadmap) | P0/P1 | **Improve**: comments/approvals tied to execution gates |
+| Playbooks from successful runs | Devin advanced workflow + team automation products | Planned (templates/playbooks) | P1 | **Improve**: auto-generate playbooks from completed tasks |
+| Batch execution across repos/branches | Common in platform-oriented agent tools | Partial concept | P1/P2 | **Copy + improve**: queue-aware, resumable batch jobs |
+| Workflow-native integrations (GitHub/Slack/Linear/Jira) | Copilot/Factory/Codegen focus on in-workflow triggers | GitHub-focused roadmap | P2 | **Improve**: bi-directional state/comment sync |
+| Portable repo-level agent config (`AGENTS.md`-style) | Open agent ecosystem converging on repo-scoped config | Planned concept (skills) | P1 | **Copy**: adopt compatible schema + migration path |
+| Multi-agent orchestration for one task | OpenHands/research agents and commercial products explore this | Planned (roadmap) | P2 | **Improve**: comparison UI + merge strategy |
+| Cost controls and budgets by org/team/user | Standard in team/enterprise agent platforms | Planned (roadmap) | P1 | **Copy**: hard limits + alerts + cost attribution |
+| Observability and auditability | Enterprise expectation across platforms | Planned (roadmap) | P1/P2 | **Copy + improve**: audit trail + quality KPIs tied to repos |
+| Trajectory inspection + evaluation tooling | SWE-agent and eval-first teams emphasize run trace analysis | Not explicit | P1 | **Copy + improve**: trace viewer + replay + quality metrics |
+| Deterministic task replay | Reliability/compliance teams need reproducible runs | Not explicit | P1 | **Improve**: snapshot inputs/runtime/tool versions for exact replay |
+| Secrets provenance + leak detection | Enterprise platforms require stronger secret governance | Not explicit | P0/P1 | **Copy + improve**: source tracking + redaction + exfil alerts |
+| Multi-runtime ecosystem breadth | OpenHands-style runtime flexibility (local/docker/remote) | Partial (nspawn-centric) | P2/P3 | **Improve**: runtime adapter interface with policy parity |
+
+### Why Tekton Is Useful (Even With Strong Competitors)
+
+The goal is not to beat every coding agent on every axis. The goal is to win for teams that need controllable, self-hosted background agents with predictable operations.
+
+- **Trust and control over autonomy theater.** Teams can adopt AI coding workflows with explicit guardrails (policy, approvals, egress controls) instead of opaque defaults.
+- **Vendor independence.** BYO model/provider strategy prevents lock-in and keeps model choice flexible as quality and pricing change.
+- **Lower long-term unit economics.** For team usage, self-hosted infrastructure + provider flexibility can reduce cost per merged PR versus seat-priced SaaS.
+- **Data locality and compliance fit.** Sensitive repositories and execution paths stay in customer-controlled environments.
+- **Standardized execution environments.** Reproducible runtime + policy profiles reduce variance and make outcomes more predictable.
+- **Compounding institutional memory.** Plans, logs, outcomes, and playbooks become reusable organizational knowledge.
+- **Operational leverage at team scale.** Batch/recurrent/event-driven task execution converts one-off prompting into repeatable automation.
+- **Auditability and accountability.** Full action history clarifies who asked what, what ran, what was blocked, and why.
+- **Private-system integration upside.** Self-hosted architecture is better suited for internal APIs, tooling, and security controls that SaaS tools cannot access easily.
+
+If Tekton executes on these dimensions, it does not need to out-market incumbents on generic "agent coding UX" to be a strong product.
 
 ### Deprioritized for now
 

@@ -168,7 +168,7 @@ else
     echo -en "${BOLD}GitHub webhook secret (leave blank to auto-generate):${NC} "
     read -r GITHUB_WEBHOOK_SECRET
     if [[ -z "$GITHUB_WEBHOOK_SECRET" ]]; then
-        GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 16)
+        GITHUB_WEBHOOK_SECRET=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
         success "Generated webhook secret: $GITHUB_WEBHOOK_SECRET"
         echo -e "  ${YELLOW}Save this secret — you'll need it when configuring the GitHub webhook.${NC}"
     else
@@ -338,7 +338,7 @@ fi
 header "Step 3: Generate Secrets"
 
 info "Generating JWT secret..."
-JWT_SECRET=$(openssl rand -hex 32)
+JWT_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
 success "JWT secret generated."
 
 info "Generating SSH signing key for git commits..."

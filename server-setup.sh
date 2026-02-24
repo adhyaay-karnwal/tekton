@@ -20,6 +20,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_CONFIG="$SCRIPT_DIR/server-config"
 
+# Ensure common tools are on PATH (NixOS doesn't put everything in /usr/bin)
+export PATH="/run/current-system/sw/bin:$PATH"
+
 # -- Colors -------------------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'

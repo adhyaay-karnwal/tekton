@@ -332,7 +332,7 @@ gather_info() {
 
     ORIGIN_CERT_PATH=""
     ORIGIN_KEY_PATH=""
-    PEM_PATH=""
+    GITHUB_PAT=""
 
     if confirm "Upload Cloudflare Origin CA certificate + key?"; then
         echo -en "${BOLD}Path to Cloudflare Origin CA certificate (.pem):${NC} "
@@ -348,13 +348,10 @@ gather_info() {
         success "Cloudflare Origin CA cert + key found."
     fi
 
-    if confirm "Upload GitHub App private key?"; then
-        echo -en "${BOLD}Path to GitHub App private key (.pem):${NC} "
-        read -r PEM_PATH
-        if [[ -z "$PEM_PATH" ]] || [[ ! -f "$PEM_PATH" ]]; then
-            fatal "PEM file not found: ${PEM_PATH:-<empty>}"
-        fi
-        success "GitHub App private key found."
+    echo -en "${BOLD}Enter GitHub Personal Access Token (leave blank to set up later):${NC} "
+    read -r GITHUB_PAT
+    if [[ -n "$GITHUB_PAT" ]]; then
+        success "GitHub PAT provided."
     fi
 
     # --- Summary ---
@@ -370,9 +367,9 @@ gather_info() {
     echo -e "  ${BOLD}SSH Key:${NC}       ${SSH_KEY:0:50}..."
     local secrets_summary=""
     [[ -n "$ORIGIN_CERT_PATH" ]] && secrets_summary="Cloudflare cert"
-    if [[ -n "$PEM_PATH" ]]; then
+    if [[ -n "$GITHUB_PAT" ]]; then
         [[ -n "$secrets_summary" ]] && secrets_summary="$secrets_summary, "
-        secrets_summary="${secrets_summary}GitHub App PEM"
+        secrets_summary="${secrets_summary}GitHub PAT"
     fi
     echo -e "  ${BOLD}Secrets:${NC}       ${secrets_summary:-none}"
     echo ""
@@ -524,11 +521,10 @@ setup_server() {
         success "Cloudflare Origin CA cert + key uploaded."
     fi
 
-    if [[ -n "$PEM_PATH" ]]; then
-        info "Uploading GitHub App private key..."
-        scp $ssh_opts "$PEM_PATH" root@"$SERVER_IP":/var/secrets/github-app.pem
-        ssh $ssh_opts root@"$SERVER_IP" "chmod 600 /var/secrets/github-app.pem"
-        success "GitHub App private key uploaded."
+    if [[ -n "$GITHUB_PAT" ]]; then
+        info "Uploading GitHub Personal Access Token..."
+        ssh $ssh_opts root@"$SERVER_IP" "echo '$GITHUB_PAT' > /var/secrets/github-pat && chmod 600 /var/secrets/github-pat"
+        success "GitHub PAT uploaded."
     fi
 
     # Run server-setup.sh interactively

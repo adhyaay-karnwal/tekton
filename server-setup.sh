@@ -11,7 +11,7 @@ set -euo pipefail
 #   - Repo cloned at /opt/src/ (done by setup.sh)
 #   - Secret files uploaded to /var/secrets/ (done by setup.sh):
 #     - cloudflare-origin.pem, cloudflare-origin-key.pem
-#     - github-app.pem (if using GitHub App auth)
+#     - github-pat (if GitHub PAT was provided)
 #
 # Usage:
 #   cd /opt/src && ./server-setup.sh
@@ -117,19 +117,21 @@ prompt GOOGLE_CLIENT_ID "Google OAuth Client ID"
 prompt_secret GOOGLE_CLIENT_SECRET "Google OAuth Client Secret"
 echo ""
 
-echo -e "${BOLD}--- GitHub App ---${NC}"
-echo "Create at: GitHub > Settings > Developer settings > GitHub Apps"
+echo -e "${BOLD}--- GitHub Personal Access Token ---${NC}"
+echo "Create at: GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic)"
+echo "Required scope: repo (full control of private repositories)"
 echo ""
-prompt GITHUB_APP_ID "GitHub App ID"
-prompt GITHUB_INSTALLATION_ID "GitHub App Installation ID"
-echo ""
-
-# Check for GitHub App PEM
-if [[ -f /var/secrets/github-app.pem ]]; then
-    success "GitHub App private key found at /var/secrets/github-app.pem"
+GITHUB_TOKEN_DEFAULT=""
+if [[ -f /var/secrets/github-pat ]]; then
+    GITHUB_TOKEN_DEFAULT=$(cat /var/secrets/github-pat)
+    success "GitHub PAT found at /var/secrets/github-pat (uploaded by setup.sh)"
+fi
+if [[ -n "$GITHUB_TOKEN_DEFAULT" ]]; then
+    echo -ne "${BOLD}GitHub Personal Access Token${NC} [****${GITHUB_TOKEN_DEFAULT: -4}]: "
+    read -r GITHUB_TOKEN_INPUT
+    GITHUB_TOKEN="${GITHUB_TOKEN_INPUT:-$GITHUB_TOKEN_DEFAULT}"
 else
-    warn "No GitHub App private key found at /var/secrets/github-app.pem"
-    warn "If using GitHub App auth, upload it before starting services."
+    prompt GITHUB_TOKEN "GitHub Personal Access Token"
 fi
 echo ""
 
@@ -285,7 +287,7 @@ echo "  Disk 1:         $DISK_DEVICE_1"
 echo "  Domain:         $DOMAIN"
 echo "  Login domain:   $ALLOWED_DOMAIN"
 echo "  Google Client:  ${GOOGLE_CLIENT_ID:0:20}..."
-echo "  GitHub App ID:  $GITHUB_APP_ID"
+echo "  GitHub PAT:     ****${GITHUB_TOKEN: -4}"
 echo "  Allowed repos:  ${ALLOWED_REPOS:-<all>}"
 echo "  Vertex repos:   ${VERTEX_REPOS:-<none>}"
 echo "  Git email:      $GIT_EMAIL"
@@ -433,9 +435,7 @@ success "dashboard.env written."
 
 info "Writing preview.env..."
 cat > /var/secrets/preview.env << ENVEOF
-GITHUB_APP_ID=${GITHUB_APP_ID}
-GITHUB_APP_INSTALLATION_ID=${GITHUB_INSTALLATION_ID}
-GITHUB_APP_PRIVATE_KEY_PATH=/var/secrets/github-app.pem
+GITHUB_TOKEN=${GITHUB_TOKEN}
 GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
 PREVIEW_DOMAIN=${DOMAIN}
 WEBHOOK_PORT=3100

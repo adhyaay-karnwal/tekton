@@ -14,7 +14,7 @@ Complete guide to deploying Tekton from scratch and maintaining it afterwards.
 
 **External services (set up before or during install):**
 - [Cloudflare](https://dash.cloudflare.com) account with your domain added
-- [GitHub App](https://github.com/settings/apps) installed on target repos
+- [GitHub Personal Access Token](https://github.com/settings/tokens) with `repo` scope
 - [Google Cloud](https://console.cloud.google.com/) OAuth credentials
 - Claude Max/Teams subscription
 
@@ -70,24 +70,15 @@ The wildcard record covers preview subdomains (e.g., `42.yourdomain.com`) and th
 
 **Important**: All records must be **proxied** (orange cloud). If set to "DNS only" (grey cloud), browsers will connect directly to your server and reject the Origin CA certificate.
 
-### 2. GitHub App
+### 2. GitHub Personal Access Token
 
-Create a GitHub App in your org (Settings > Developer settings > GitHub Apps > New GitHub App):
+Create a Personal Access Token (classic) at [GitHub Settings > Developer settings > Personal access tokens > Tokens (classic)](https://github.com/settings/tokens):
 
-- **Name:** Something like "Preview Bot"
-- **Homepage URL:** `https://dashboard.yourdomain.com`
-- **Webhook URL:** `https://webhook.yourdomain.com/webhook/github`
-- **Webhook secret:** Generate a random string (you'll enter this during setup)
-- **Permissions:**
-  - Repository: Contents (Read & Write), Pull requests (Read & Write), Metadata (Read)
-- **Subscribe to events:** Pull request
-- **Where can this app be installed?** Only on this account
-
-After creating:
-1. Note the **App ID**
-2. Generate and download a **Private Key** (.pem file) — save this locally
-3. Install the app on the target repositories
-4. Note the **Installation ID** (visible in the URL when you click on the installation: `https://github.com/settings/installations/<ID>`)
+1. Click **Generate new token** > **Generate new token (classic)**
+2. Give it a descriptive name (e.g., "Preview Deployments")
+3. Select the **`repo`** scope (full control of private repositories)
+4. Click **Generate token**
+5. **Copy the token** — it's only shown once
 
 ### 3. Google OAuth
 
@@ -130,7 +121,7 @@ The script runs through 3 phases:
 **Phase 1: Gather information (local)**
 - Prompts for your server IP and selects your SSH key
 - SSHes into rescue mode to auto-detect: gateway IP, network interface (translates rescue `eth0` to predictable name like `enp3s0`), prefix length, disk devices, and kernel modules
-- Asks for optional secret file paths to upload (Cloudflare cert + key, GitHub App PEM)
+- Asks for optional secret file paths to upload (Cloudflare cert + key, GitHub PAT)
 - Shows a summary and asks for confirmation
 
 With `--skip-install`, rescue-mode hardware detection is skipped (the server is already running NixOS).
@@ -144,14 +135,14 @@ Skipped with `--skip-install`.
 
 **Phase 3: Server setup**
 - Clones this repository on the server at `/opt/src/`
-- Uploads secret files to `/var/secrets/` (Cloudflare certs, GitHub App PEM)
+- Uploads secret files to `/var/secrets/` (Cloudflare certs, GitHub PAT)
 - SSHes into the server and runs `server-setup.sh` interactively
 
 #### What server-setup.sh does (runs on the server)
 
 The `server-setup.sh` script is the main server-side configuration tool. It prompts for all configuration values and handles the full build:
 
-1. **Configuration prompts**: domain, Google OAuth credentials, GitHub App IDs, webhook secret, allowed repos, vertex repos, SSH public key, git commit email
+1. **Configuration prompts**: domain, Google OAuth credentials, GitHub PAT, webhook secret, allowed repos, vertex repos, SSH public key, git commit email
 2. **Hardware detection**: auto-detects server IP, gateway, interface, disks, and kernel modules from the running system
 3. **Secret generation**: JWT secret, SSH signing key (for git commits), root SSH key
 4. **NixOS configuration**: substitutes all placeholders in `.nix` config files and installs to `/etc/nixos/`
@@ -300,7 +291,7 @@ Key points:
   preview.env                          # Preview webhook environment variables
   cloudflare-origin.pem                # Cloudflare Origin CA cert
   cloudflare-origin-key.pem            # Cloudflare Origin CA key
-  github-app.pem                       # GitHub App private key
+  github-pat                            # GitHub Personal Access Token
   claude/
     oauth_token                        # Long-lived Claude OAuth token
     signing_key                        # SSH signing key for git commits
@@ -360,9 +351,7 @@ STATIC_DIR=/opt/dashboard/static
 **`/var/secrets/preview.env`:**
 
 ```bash
-GITHUB_APP_ID=<app-id>
-GITHUB_APP_INSTALLATION_ID=<installation-id>
-GITHUB_APP_PRIVATE_KEY_PATH=/var/secrets/github-app.pem
+GITHUB_TOKEN=<personal-access-token>
 GITHUB_WEBHOOK_SECRET=<webhook-secret>
 PREVIEW_DOMAIN=yourdomain.com
 WEBHOOK_PORT=3100

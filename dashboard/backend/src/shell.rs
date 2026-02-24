@@ -399,21 +399,21 @@ mod tests {
     fn test_parse_preview_list() {
         let output = "\
 SLUG                STATUS          BRANCH                          URL
-123                 running         feat/foo                        https://123.hipermegared.link
-456                 stopped         main                            https://456.hipermegared.link
+123                 running         feat/foo                        https://123.example.com
+456                 stopped         main                            https://456.example.com
 ";
-        let result = parse_preview_list(output, "hipermegared.link").unwrap();
+        let result = parse_preview_list(output, "example.com").unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].slug, "123");
         assert_eq!(result[0].branch, "feat/foo");
-        assert_eq!(result[0].url, "https://123.hipermegared.link");
+        assert_eq!(result[0].url, "https://123.example.com");
         assert_eq!(result[1].slug, "456");
     }
 
     #[test]
     fn test_parse_empty_preview_list() {
         let output = "No active previews.\n";
-        let result = parse_preview_list(output, "hipermegared.link").unwrap();
+        let result = parse_preview_list(output, "example.com").unwrap();
         assert_eq!(result.len(), 0);
     }
 }

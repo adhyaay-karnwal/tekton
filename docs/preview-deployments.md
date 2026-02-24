@@ -32,7 +32,7 @@ preview create myorg/myapp feature-branch
 preview create myorg/myapp feature-branch --slug myapp-pr-42
 
 # Vertex (Elixir/Phoenix) app
-preview create lambdaclass/vertex feature-branch --type vertex --slug vtx-pr-42
+preview create myorg/myapp feature-branch --type vertex --slug vtx-pr-42
 ```
 
 Options:

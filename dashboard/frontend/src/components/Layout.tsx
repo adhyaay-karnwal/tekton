@@ -50,7 +50,7 @@ export default function Layout() {
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-4">Preview Dashboard</h1>
           <p className="text-muted-foreground mb-6">
-            Sign in with your @lambdaclass.com Google account
+            Sign in with your Google account
           </p>
           <Button asChild size="lg">
             <a href="/api/auth/login">Sign in with Google</a>

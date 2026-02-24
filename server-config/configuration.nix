@@ -102,7 +102,7 @@
         tls /var/secrets/cloudflare-origin.pem /var/secrets/cloudflare-origin-key.pem
       }
 
-      dashboard.hipermegared.link {
+      dashboard.YOUR_DOMAIN {
         import cloudflare_tls
         reverse_proxy localhost:3200
       }

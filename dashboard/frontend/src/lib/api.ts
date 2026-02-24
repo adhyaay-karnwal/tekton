@@ -73,6 +73,13 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Config
+export interface PublicConfig {
+  preview_domain: string;
+  allowed_domain: string;
+}
+export const getConfig = () => apiFetch<PublicConfig>('/api/config');
+
 // Auth
 export const getMe = () => apiFetch<UserInfo>('/api/auth/me');
 export const logout = () => fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });

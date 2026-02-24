@@ -111,8 +111,8 @@ echo ""
 # Step 2: Domain
 # =============================================================================
 echo -e "${BOLD}--- Domain Configuration ---${NC}"
-prompt DOMAIN "Preview domain (e.g., hipermegared.link)"
-prompt ALLOWED_DOMAIN "Allowed email domain for login (e.g., lambdaclass.com)"
+prompt DOMAIN "Preview domain (e.g., yourdomain.com)"
+prompt ALLOWED_DOMAIN "Allowed email domain for login (e.g., yourdomain.com)"
 echo ""
 
 # =============================================================================
@@ -296,9 +296,9 @@ trap "rm -rf $TMPDIR" EXIT
 cp "$SERVER_CONFIG/agent-config.nix" "$TMPDIR/agent-config.nix"
 # The local file already has the right structure, just needs key substitution
 # We handle this by using sed to replace placeholder keys
-sed -i.bak "s|ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEWMu5wyCIJclVNVk3Judmu5zkWxkbtTJrcC0BpEcVfy jrchatruc@gmail.com|${SSH_PUBKEY}|g" "$TMPDIR/agent-config.nix"
-sed -i.bak "s|ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIrWQgyW2acM35arp+DVr8Jo5S7A4vqbP9gLk3pMRhw root@nixos-server|${ROOT_PUBKEY}|g" "$TMPDIR/agent-config.nix"
-sed -i.bak "s|email = jrchatruc@gmail.com|email = ${GIT_EMAIL}|g" "$TMPDIR/agent-config.nix"
+sed -i.bak "s|ssh-ed25519 AAAA\.\.\. your-key-here|${SSH_PUBKEY}|g" "$TMPDIR/agent-config.nix"
+sed -i.bak "s|ssh-ed25519 AAAA\.\.\. root-key-here|${ROOT_PUBKEY}|g" "$TMPDIR/agent-config.nix"
+sed -i.bak "s|email = YOUR_GIT_EMAIL|email = ${GIT_EMAIL}|g" "$TMPDIR/agent-config.nix"
 
 # Upload NixOS configs
 scp "$TMPDIR/agent-config.nix" "$SERVER:/etc/nixos/agent-config.nix"

@@ -641,7 +641,7 @@ cmd_help() {
     echo "  preview build --type vertex"
     echo "  preview create myorg/myapp feature-branch"
     echo "  preview create myorg/myapp feature-branch --slug myapp-pr-42"
-    echo "  preview create lambdaclass/vertex feature-branch --type vertex --slug vtx-pr-42"
+    echo "  preview create myorg/myapp feature-branch --type vertex --slug vtx-pr-42"
     echo "  preview logs myapp-pr-42 --follow"
     echo "  preview update myapp-pr-42"
     echo "  preview destroy myapp-pr-42"

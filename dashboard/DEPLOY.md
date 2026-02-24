@@ -11,7 +11,7 @@ The dashboard is a web application for managing NixOS preview containers and run
                                   |
                            Caddy (TLS termination)
                           /                \
-            dashboard.hipermegared.link    *.hipermegared.link
+            dashboard.yourdomain.com    *.yourdomain.com
                      |                          |
               Dashboard (port 3200)      Preview containers
               - Rust/Axum backend        - Node.js or Vertex (Elixir)
@@ -63,7 +63,7 @@ Key points:
 
 ### 1. Cloudflare DNS
 
-You need three DNS records for your domain (e.g., `hipermegared.link`):
+You need three DNS records for your domain (e.g., `yourdomain.com`):
 
 | Type | Name | Content | Proxy |
 |------|------|---------|-------|
@@ -71,12 +71,12 @@ You need three DNS records for your domain (e.g., `hipermegared.link`):
 | A | `*` | `<server-ip>` | Proxied |
 | A | `@` | `<server-ip>` | Proxied |
 
-The wildcard record is needed for preview subdomains like `t-abc123.hipermegared.link`.
+The wildcard record is needed for preview subdomains like `t-abc123.yourdomain.com`.
 
 **Cloudflare Origin CA Certificate:**
 
 1. Go to SSL/TLS > Origin Server > Create Certificate
-2. Generate a certificate covering `*.hipermegared.link` and `hipermegared.link`
+2. Generate a certificate covering `*.yourdomain.com` and `yourdomain.com`
 3. Save the certificate as `cloudflare-origin.pem` and the private key as `cloudflare-origin-key.pem`
 4. These will be placed on the server at `/var/secrets/`
 
@@ -112,7 +112,7 @@ After creating:
 5. Authorized redirect URIs: `https://dashboard.yourdomain.com/api/auth/callback`
 6. Note the **Client ID** and **Client Secret**
 
-If you want to restrict login to a specific domain (e.g., `@lambdaclass.com`), the dashboard enforces this via the `ALLOWED_DOMAIN` environment variable.
+If you want to restrict login to a specific domain (e.g., `@yourdomain.com`), the dashboard enforces this via the `ALLOWED_DOMAIN` environment variable.
 
 ### 4. Claude Code Authentication
 
@@ -262,7 +262,19 @@ The `configuration.nix` file includes:
 - **PostgreSQL** — shared database for preview containers
 - **`agent` and `preview` CLI tools** — wrapped shell scripts for container management
 
-**Important:** `configuration.nix` in this repo has placeholder values (`YOUR.SERVER.IP.HERE`, `ssh-ed25519 AAAA... your-key-here`, etc.). The setup script substitutes these with real values. **Never scp the template directly to the server.**
+**Important:** Template files in this repo have placeholder values that must be substituted before use. **Never scp them directly to the server.** The `setup.sh` script handles substitution automatically. Placeholders:
+
+| File | Placeholder | Substituted with |
+|------|-------------|-----------------|
+| `configuration.nix` | `YOUR.SERVER.IP.HERE` | Server IP address |
+| `configuration.nix` | `YOUR.GATEWAY.IP.HERE` | Gateway IP address |
+| `configuration.nix` | `DISK_DEVICE_0`, `DISK_DEVICE_1` | Disk device paths |
+| `configuration.nix` | `INITRD_KERNEL_MODULES` | Initrd kernel modules |
+| `configuration.nix` | `dashboard.YOUR_DOMAIN` | Dashboard domain (e.g., `dashboard.yourdomain.com`) |
+| `configuration.nix` | `ssh-ed25519 AAAA... your-key-here` | Your SSH public key |
+| `agent-config.nix` | `YOUR_GIT_EMAIL` | Git commit email (must match GitHub account with signing key) |
+| `agent-config.nix` | `ssh-ed25519 AAAA... your-key-here` | Your SSH public key |
+| `agent-config.nix` | `ssh-ed25519 AAAA... root-key-here` | Server's root SSH public key |
 
 ### First-time Setup
 
@@ -313,8 +325,8 @@ Use the `deploy.sh` script from the repo root. It pushes your current branch, pu
 
 ### Notes
 
-- **Never scp `configuration.nix` directly** — the local copy has placeholder values. Either edit on the server or use `setup.sh` for a fresh install.
-- The deploy script skips `configuration.nix` automatically (it only copies the supporting `.nix` files and scripts).
+- **Never scp `configuration.nix` or `agent-config.nix` directly** — the local copies have placeholder values. Either edit on the server, or use `setup.sh` for a fresh install.
+- The deploy script skips both `configuration.nix` and `agent-config.nix` automatically (it only copies the supporting `.nix` files and scripts).
 - First Rust build on a fresh server takes a while (downloading crates). Subsequent builds are fast thanks to cached target directory.
 
 ### Claude OAuth token refresh

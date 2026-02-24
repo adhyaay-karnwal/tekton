@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod models;
 mod previews;
+mod public_config;
 mod shell;
 mod tasks;
 mod ws;
@@ -50,6 +51,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let api = Router::new()
+        // Public config
+        .route("/config", get(public_config::get_config))
         // Auth
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))

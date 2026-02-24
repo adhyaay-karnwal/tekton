@@ -50,7 +50,7 @@ EOF
       cat > /home/agent/.gitconfig << 'GITEOF'
 [user]
 	name = Claude (Dashboard)
-	email = jrchatruc@gmail.com
+	email = YOUR_GIT_EMAIL
 [gpg]
 	format = ssh
 [user]
@@ -75,8 +75,8 @@ GITEOF
     shell = pkgs.bash;
     extraGroups = [ "wheel" ];
     openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEWMu5wyCIJclVNVk3Judmu5zkWxkbtTJrcC0BpEcVfy jrchatruc@gmail.com"
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIrWQgyW2acM35arp+DVr8Jo5S7A4vqbP9gLk3pMRhw root@nixos-server"
+      "ssh-ed25519 AAAA... your-key-here"
+      "ssh-ed25519 AAAA... root-key-here"
     ];
   };
 
@@ -85,8 +85,8 @@ GITEOF
   users.users.root = {
     password = "changeme";  # Fallback password
     openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEWMu5wyCIJclVNVk3Judmu5zkWxkbtTJrcC0BpEcVfy jrchatruc@gmail.com"
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIrWQgyW2acM35arp+DVr8Jo5S7A4vqbP9gLk3pMRhw root@nixos-server"
+      "ssh-ed25519 AAAA... your-key-here"
+      "ssh-ed25519 AAAA... root-key-here"
     ];
   };
 

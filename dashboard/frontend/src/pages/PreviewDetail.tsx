@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ExternalLink } from 'lucide-react';
 import LogViewer from '@/components/LogViewer';
-import { connectPreviewLogs } from '@/lib/api';
+import { connectPreviewLogs, getConfig } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,11 @@ export default function PreviewDetail() {
   const navigate = useNavigate();
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [previewDomain, setPreviewDomain] = useState<string | null>(null);
+
+  useEffect(() => {
+    getConfig().then((cfg) => setPreviewDomain(cfg.preview_domain)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!slug) return;
@@ -26,7 +31,7 @@ export default function PreviewDetail() {
     };
   }, [slug]);
 
-  const previewUrl = slug ? `https://${slug}.hipermegared.link` : '';
+  const previewUrl = slug && previewDomain ? `https://${slug}.${previewDomain}` : '';
 
   return (
     <div>

@@ -81,7 +81,7 @@ in
         echo "Generating preview secrets..."
         {
           echo "PORT=8000"
-          echo "FLASK_ENV=production"
+          echo "FLASK_DEBUG=0"
         } > "$SECRETS_FILE"
         chmod 600 "$SECRETS_FILE"
       fi

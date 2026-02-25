@@ -348,7 +348,6 @@ GITHUB_REDIRECT_URI=https://dashboard.yourdomain.com/api/auth/callback
 GITHUB_ORG=yourorg
 PREVIEW_DOMAIN=yourdomain.com
 ALLOWED_REPOS=yourorg/repo1,yourorg/repo2
-VERTEX_REPOS=yourorg/elixir-repo
 PREVIEW_BIN=/run/current-system/sw/bin/preview
 AGENT_BIN=/run/current-system/sw/bin/agent
 STATIC_DIR=/opt/dashboard/static
@@ -362,7 +361,6 @@ GITHUB_WEBHOOK_SECRET=<webhook-secret>
 PREVIEW_DOMAIN=yourdomain.com
 WEBHOOK_PORT=3100
 ALLOWED_REPOS=yourorg/repo1,yourorg/repo2
-VERTEX_REPOS=yourorg/elixir-repo
 ```
 
 **`/var/secrets/claude/oauth_token`:**

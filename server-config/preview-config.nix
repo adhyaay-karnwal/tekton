@@ -83,8 +83,8 @@ in
         # Fresh clone
         echo "Cloning $PREVIEW_REPO_URL (branch: $PREVIEW_BRANCH)..."
         ${pkgs.git}/bin/git clone --branch "$PREVIEW_BRANCH" --single-branch "$AUTHED_URL" "$APP_DIR"
-        cd "$APP_DIR"
       fi
+      cd "$APP_DIR"
 
       # Install dependencies
       if [ -f package-lock.json ]; then

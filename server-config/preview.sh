@@ -528,6 +528,9 @@ cmd_create() {
         --host-address "$host_ip" \
         --local-address "$local_ip"
 
+    # Claim the IP slot immediately so no concurrent create can reuse it
+    bump_slot
+
     # Write container environment files
     local container_root="/var/lib/nixos-containers/${slug}"
     mkdir -p "${container_root}/etc"
@@ -561,7 +564,8 @@ cmd_create() {
         if [[ $n_secrets -gt 0 ]]; then
             while IFS= read -r secret_key; do
                 local secret_val
-                secret_val=$(sed -n "s|^${secret_key}=||p" "$SECRETS_FILE" | head -1)
+                # grep -F treats secret_key as a literal string (no regex metacharacters)
+                secret_val=$(grep -F "^${secret_key}=" "$SECRETS_FILE" | head -1 | cut -d= -f2-)
                 if [[ -n "$secret_val" ]]; then
                     echo "${secret_key}=${secret_val}"
                 else
@@ -575,7 +579,6 @@ cmd_create() {
     # Track the preview
     echo "${slot} ${host_ip} ${local_ip} ${repo} ${branch}" > "$PREVIEW_DIR/$slug"
     echo "$commit_sha" > "$PREVIEW_DIR/${slug}.sha"
-    bump_slot
 
     # Start the container
     nixos-container start "$slug"
@@ -700,8 +703,7 @@ cmd_update() {
     # Signal the setup service to do a full rebuild
     nixos-container run "$slug" -- su -s /bin/sh preview -c "touch /tmp/force-rebuild"
 
-    nixos-container run "$slug" -- bash -c \
-        "systemctl restart ${SETUP_SERVICE} && systemctl restart ${APP_SERVICES[*]}"
+    nixos-container run "$slug" -- systemctl restart "$SETUP_SERVICE" "${APP_SERVICES[@]}"
 
     success "Preview '$slug' is rebuilding. Check progress with: preview logs $slug --follow"
 }

@@ -210,10 +210,14 @@ systemd.services.setup-myapp = {
 ### Skip rebuild on container restart
 
 If the container is restarted (host reboot, etc.) the code is already built.
-Check for the built artifact and exit early:
+Check for a stack-specific built artifact and exit early:
 
 ```bash
 APP_DIR="/home/preview/app"
+# Adapt the artifact check to your stack:
+#   Node.js:  [ -f "$APP_DIR/dist/index.js" ]
+#   Elixir:   [ -f "$APP_DIR/_build/prod/rel/myapp/bin/myapp" ]
+#   Python:   [ -d "$APP_DIR/venv" ]
 if [ -d "$APP_DIR/.git" ] && [ -f "$APP_DIR/dist/index.js" ] && [ ! -f /tmp/force-rebuild ]; then
   echo "Already built, skipping setup."
   exit 0
@@ -314,11 +318,11 @@ serviceConfig.ExecStart =
 
 ## Step 2 — Register the repo in the webhook allowlist
 
-On the server, add the repo to `ALLOWED_REPOS` in
-`/var/secrets/preview-webhook.env` and restart the webhook service:
+On the server, add the repo to `ALLOWED_REPOS` in `/var/secrets/preview.env`
+and restart the webhook service:
 
 ```bash
-# /var/secrets/preview-webhook.env
+# /var/secrets/preview.env
 ALLOWED_REPOS=myorg/existing-repo,myorg/myapp
 ```
 

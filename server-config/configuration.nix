@@ -89,8 +89,12 @@
       listen_addresses = "*";
     };
     authentication = ''
+      local dashboard dashboard peer map=dashboard
       local all all peer
       host all all 10.100.0.0/24 md5
+    '';
+    identMap = ''
+      dashboard root dashboard
     '';
     ensureDatabases = [ "dashboard" ];
     ensureUsers = [{

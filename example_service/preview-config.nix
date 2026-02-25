@@ -118,7 +118,7 @@ in
 
       # Create a virtualenv and install dependencies
       echo "Installing Python dependencies..."
-      cd "$APP_DIR/example_service"
+      cd "$APP_DIR"
       ${pkgs.python3}/bin/python -m venv venv
       venv/bin/pip install --quiet -r requirements.txt
 
@@ -135,13 +135,13 @@ in
     serviceConfig = {
       Type        = "simple";
       User        = "preview";
-      WorkingDirectory = "/home/preview/app/example_service";
+      WorkingDirectory = "/home/preview/app";
       # Secrets loaded first; /etc/preview.env overlays on top so hostSecrets win.
       EnvironmentFile = [
         "/home/preview/.example-secrets.env"
         "/etc/preview.env"
       ];
-      ExecStart   = "/home/preview/app/example_service/venv/bin/python app.py";
+      ExecStart   = "/home/preview/app/venv/bin/python app.py";
       Restart     = "on-failure";
       RestartSec  = 5;
     };

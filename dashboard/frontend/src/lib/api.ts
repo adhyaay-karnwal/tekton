@@ -177,11 +177,7 @@ export function parseImageUrls(raw: string | null | undefined): string[] {
     return [raw];
   }
 }
-export const classifyPrompt = (prompt: string) =>
-  apiFetch<{ repo: string }>('/api/classify', {
-    method: 'POST',
-    body: JSON.stringify({ prompt }),
-  });
+export const listRepos = () => apiFetch<string[]>('/api/repos');
 
 // WebSocket helpers
 export function connectPreviewLogs(slug: string): WebSocket {

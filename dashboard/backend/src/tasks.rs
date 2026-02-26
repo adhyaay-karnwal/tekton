@@ -10,8 +10,8 @@ use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
-    ClassifyRequest, ClassifyResponse, CreateTaskRequest, ListMessagesQuery, ListTasksQuery,
-    PaginatedTasks, SendMessageRequest, Task, TaskAction, TaskLog, TaskMessage,
+    CreateTaskRequest, ListMessagesQuery, ListTasksQuery, PaginatedTasks, SendMessageRequest,
+    Task, TaskAction, TaskLog, TaskMessage,
 };
 use crate::shell;
 
@@ -1195,63 +1195,19 @@ async fn take_screenshot(
     }
 }
 
-// ── Classify ──
+// ── Repos ──
 
-pub async fn classify(
+pub async fn list_repos(
     _user: AuthUser,
     State(state): State<crate::AppState>,
-    Json(req): Json<ClassifyRequest>,
-) -> Result<Json<ClassifyResponse>, AppError> {
-    if state.config.allowed_repos.is_empty() {
-        return Err(AppError::BadRequest("No allowed repos configured".into()));
-    }
+) -> Result<Json<Vec<String>>, AppError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT repo FROM tasks ORDER BY repo"
+    )
+    .fetch_all(&state.db)
+    .await?;
 
-    let repo_list = state
-        .config
-        .allowed_repos
-        .iter()
-        .enumerate()
-        .map(|(i, r)| format!("{}. {}", i + 1, r))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let system_prompt = format!(
-        "You are a repository classifier. Given a task description, pick the single best matching \
-         repository from this list and respond with ONLY the repo name (owner/repo format), nothing else.\n\n\
-         Available repositories:\n{repo_list}"
-    );
-
-    let full_prompt = format!("{system_prompt}\n\nTask: {}", req.prompt);
-    let escaped = full_prompt.replace('\'', "'\\''");
-
-    // Run claude CLI on the host using the long-lived OAuth token
-    let oauth_token = read_claude_oauth_token().await?;
-    let output = tokio::process::Command::new(&state.config.claude_bin)
-        .env("CLAUDE_CODE_OAUTH_TOKEN", &oauth_token)
-        .args(["--dangerously-skip-permissions", "-p", &escaped])
-        .output()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to run claude for classification: {e}")))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    // Find which allowed repo the response matches
-    let repo = state
-        .config
-        .allowed_repos
-        .iter()
-        .find(|r| stdout.contains(r.as_str()))
-        .cloned()
-        .unwrap_or_else(|| {
-            // Fallback: return the raw output truncated, or first repo
-            if stdout.is_empty() {
-                state.config.allowed_repos[0].clone()
-            } else {
-                stdout.lines().next().unwrap_or("").to_string()
-            }
-        });
-
-    Ok(Json(ClassifyResponse { repo }))
+    Ok(Json(rows))
 }
 
 // ── Messages ──

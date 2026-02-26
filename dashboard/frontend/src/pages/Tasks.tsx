@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listTasks, createTask, classifyPrompt, uploadImage, type ListTasksParams } from '@/lib/api';
+import { listTasks, createTask, listRepos, uploadImage, type ListTasksParams } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,46 +58,23 @@ export default function Tasks() {
   const [prompt, setPrompt] = useState('');
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
-  const [repoAutoDetected, setRepoAutoDetected] = useState(false);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  const classifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const scheduleClassify = useCallback((text: string) => {
-    if (classifyTimerRef.current) clearTimeout(classifyTimerRef.current);
-    if (text.length <= 20) return;
-    classifyTimerRef.current = setTimeout(async () => {
-      try {
-        const result = await classifyPrompt(text);
-        if (result.repo) {
-          setRepo(result.repo);
-          setRepoAutoDetected(true);
-        }
-      } catch {
-        // silently ignore classify errors
-      }
-    }, 1000);
-  }, []);
+  const { data: knownRepos } = useQuery({
+    queryKey: ['repos'],
+    queryFn: listRepos,
+  });
 
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setPrompt(e.target.value);
-    setRepoAutoDetected(false);
-    scheduleClassify(e.target.value);
   };
 
   const handleTranscript = (text: string) => {
     const next = prompt ? `${prompt} ${text}` : text;
     setPrompt(next);
-    setRepoAutoDetected(false);
-    scheduleClassify(next);
-  };
-
-  const handleRepoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setRepo(e.target.value);
-    setRepoAutoDetected(false);
   };
 
   const addImageFiles = (files: FileList | File[]) => {
@@ -132,7 +109,6 @@ export default function Tasks() {
       setPrompt('');
       setRepo('');
       setBaseBranch('main');
-      setRepoAutoDetected(false);
       setImageFiles([]);
       setImagePreviews([]);
     },
@@ -252,19 +228,20 @@ export default function Tasks() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor="task-repo">Repository</Label>
-                      {repoAutoDetected && (
-                        <span className="text-xs text-muted-foreground">auto-detected</span>
-                      )}
-                    </div>
+                    <Label htmlFor="task-repo">Repository</Label>
                     <Input
                       id="task-repo"
+                      list="repo-options"
                       value={repo}
-                      onChange={handleRepoChange}
+                      onChange={(e) => setRepo(e.target.value)}
                       placeholder="owner/repo"
                       required
                     />
+                    <datalist id="repo-options">
+                      {knownRepos?.map((r) => (
+                        <option key={r} value={r} />
+                      ))}
+                    </datalist>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="base-branch">Base Branch</Label>

@@ -297,8 +297,8 @@ pub async fn create_task(
         .map(|v| serde_json::to_string(v).unwrap());
 
     sqlx::query(
-        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url, name) \
-         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8)",
+        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url) \
+         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)",
     )
     .bind(&id)
     .bind(&req.prompt)
@@ -307,7 +307,6 @@ pub async fn create_task(
     .bind(&req.parent_task_id)
     .bind(created_by)
     .bind(&image_url_json)
-    .bind(&req.name)
     .execute(&state.db)
     .await?;
 
@@ -384,7 +383,23 @@ async fn run_task_pipeline(
     tx: broadcast::Sender<String>,
 ) -> Result<(), AppError> {
     let agent_name = format!("a-{short_id}");
-    let branch_name = format!("claude/{short_id}");
+
+    // Generate a short name for the task using Claude
+    let task_name = match generate_task_name(prompt).await {
+        Ok(name) if !name.is_empty() => name,
+        _ => format!("task-{short_id}"),
+    };
+
+    // Save the generated name to the DB
+    let _ = sqlx::query("UPDATE tasks SET name = $1 WHERE id = $2")
+        .bind(&task_name)
+        .bind(task_id)
+        .execute(db)
+        .await;
+
+    // Use the task name for the branch (with short_id suffix for uniqueness)
+    let slug = slugify_for_branch(&task_name);
+    let branch_name = format!("{slug}-{short_id}");
 
     // Step 1: Create agent container
     update_task_status(db, task_id, "creating_agent", None).await?;
@@ -452,6 +467,60 @@ async fn read_claude_oauth_token() -> Result<String, AppError> {
         .map_err(|e| AppError::Internal(format!(
             "Failed to read Claude OAuth token from /var/secrets/claude/oauth_token: {e}"
         )))
+}
+
+/// Generate a short task name from the prompt using Claude CLI.
+/// Returns a concise 3-5 word name suitable for display and branch naming.
+async fn generate_task_name(prompt: &str) -> Result<String, AppError> {
+    let oauth_token = read_claude_oauth_token().await?;
+    let naming_prompt = format!(
+        "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this task. \
+         Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
+    );
+
+    let output = tokio::process::Command::new("claude")
+        .args([
+            "--dangerously-skip-permissions",
+            "-p",
+            &naming_prompt,
+        ])
+        .env("CLAUDE_CODE_OAUTH_TOKEN", &oauth_token)
+        .output()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to run claude for naming: {e}")))?;
+
+    if !output.status.success() {
+        return Err(AppError::Internal("Claude naming command failed".to_string()));
+    }
+
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Take at most 60 chars
+    let name = if name.len() > 60 { name[..60].to_string() } else { name };
+    Ok(name)
+}
+
+/// Convert a task name into a slug suitable for git branch names.
+fn slugify_for_branch(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+    // Collapse multiple dashes and trim
+    let mut result = String::new();
+    let mut prev_dash = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_dash && !result.is_empty() {
+                result.push('-');
+            }
+            prev_dash = true;
+        } else {
+            result.push(c);
+            prev_dash = false;
+        }
+    }
+    result.trim_end_matches('-').to_string()
 }
 
 async fn run_claude_streaming(

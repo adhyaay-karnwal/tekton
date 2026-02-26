@@ -76,7 +76,6 @@ pub struct CreateTaskRequest {
     pub base_branch: Option<String>,
     pub parent_task_id: Option<String>,
     pub image_urls: Option<Vec<String>>,
-    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

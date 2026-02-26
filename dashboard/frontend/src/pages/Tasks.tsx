@@ -58,7 +58,6 @@ export default function Tasks() {
   const [prompt, setPrompt] = useState('');
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
-  const [taskName, setTaskName] = useState('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -101,7 +100,7 @@ export default function Tasks() {
   };
 
   const createMutation = useMutation({
-    mutationFn: async (data: { prompt: string; repo: string; base_branch?: string; image_urls?: string[]; name?: string }) => {
+    mutationFn: async (data: { prompt: string; repo: string; base_branch?: string; image_urls?: string[] }) => {
       return createTask(data);
     },
     onSuccess: () => {
@@ -110,7 +109,6 @@ export default function Tasks() {
       setPrompt('');
       setRepo('');
       setBaseBranch('main');
-      setTaskName('');
       setImageFiles([]);
       setImagePreviews([]);
     },
@@ -137,7 +135,6 @@ export default function Tasks() {
       repo,
       base_branch: baseBranch || undefined,
       image_urls,
-      name: taskName || undefined,
     });
   };
 
@@ -255,15 +252,6 @@ export default function Tasks() {
                       placeholder="main"
                     />
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="task-name">Task Name <span className="text-muted-foreground">(optional)</span></Label>
-                  <Input
-                    id="task-name"
-                    value={taskName}
-                    onChange={(e) => setTaskName(e.target.value)}
-                    placeholder="Short descriptive name..."
-                  />
                 </div>
               </div>
               <Button type="submit" disabled={createMutation.isPending || uploading}>

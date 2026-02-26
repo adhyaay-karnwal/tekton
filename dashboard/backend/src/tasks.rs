@@ -469,31 +469,51 @@ async fn read_claude_oauth_token() -> Result<String, AppError> {
         )))
 }
 
-/// Generate a short task name from the prompt using Claude CLI.
+/// Generate a short task name from the prompt using the Anthropic Messages API.
 /// Returns a concise 3-5 word name suitable for display and branch naming.
 async fn generate_task_name(prompt: &str) -> Result<String, AppError> {
     let oauth_token = read_claude_oauth_token().await?;
-    let naming_prompt = format!(
-        "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this task. \
-         Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
-    );
 
-    let output = tokio::process::Command::new("claude")
-        .args([
-            "--dangerously-skip-permissions",
-            "-p",
-            &naming_prompt,
-        ])
-        .env("CLAUDE_CODE_OAUTH_TOKEN", &oauth_token)
-        .output()
+    let body = serde_json::json!({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 30,
+        "messages": [{
+            "role": "user",
+            "content": format!(
+                "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this coding task. \
+                 Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
+            )
+        }]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &oauth_token)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to run claude for naming: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("Failed to call Anthropic API for naming: {e}")))?;
 
-    if !output.status.success() {
-        return Err(AppError::Internal("Claude naming command failed".to_string()));
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(AppError::Internal(format!(
+            "Anthropic API returned {status}: {text}"
+        )));
     }
 
-    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let json: serde_json::Value = resp.json().await
+        .map_err(|e| AppError::Internal(format!("Failed to parse naming response: {e}")))?;
+
+    let name = json["content"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
     // Take at most 60 chars
     let name = if name.len() > 60 { name[..60].to_string() } else { name };
     Ok(name)

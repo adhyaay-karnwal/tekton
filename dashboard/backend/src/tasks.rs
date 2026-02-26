@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
     CreateTaskRequest, ListMessagesQuery, ListTasksQuery, PaginatedTasks, SendMessageRequest,
-    Task, TaskAction, TaskLog, TaskMessage,
+    Task, TaskAction, TaskLog, TaskMessage, UpdateTaskNameRequest,
 };
 use crate::shell;
 
@@ -189,7 +189,7 @@ pub async fn list_tasks(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks {where_clause} ORDER BY created_at DESC LIMIT ${bind_idx} OFFSET ${next_idx}",
         bind_idx = bind_idx,
         next_idx = bind_idx + 1,
@@ -220,7 +220,7 @@ pub async fn get_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -247,7 +247,7 @@ pub async fn get_subtasks(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE parent_task_id = $1 ORDER BY created_at ASC"
     )
     .bind(&id)
@@ -319,7 +319,7 @@ pub async fn create_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -383,7 +383,33 @@ async fn run_task_pipeline(
     tx: broadcast::Sender<String>,
 ) -> Result<(), AppError> {
     let agent_name = format!("a-{short_id}");
-    let branch_name = format!("claude/{short_id}");
+
+    // Generate a short name for the task using Claude
+    let task_name = match generate_task_name(prompt).await {
+        Ok(name) if !name.is_empty() => {
+            tracing::info!("Generated task name for {task_id}: {name}");
+            name
+        }
+        Ok(_) => {
+            tracing::warn!("Empty task name generated for {task_id}, using fallback");
+            format!("task-{short_id}")
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate task name for {task_id}: {e}");
+            format!("task-{short_id}")
+        }
+    };
+
+    // Save the generated name to the DB
+    let _ = sqlx::query("UPDATE tasks SET name = $1 WHERE id = $2")
+        .bind(&task_name)
+        .bind(task_id)
+        .execute(db)
+        .await;
+
+    // Use the task name for the branch (with short_id suffix for uniqueness)
+    let slug = slugify_for_branch(&task_name);
+    let branch_name = format!("{slug}-{short_id}");
 
     // Step 1: Create agent container
     update_task_status(db, task_id, "creating_agent", None).await?;
@@ -451,6 +477,68 @@ async fn read_claude_oauth_token() -> Result<String, AppError> {
         .map_err(|e| AppError::Internal(format!(
             "Failed to read Claude OAuth token from /var/secrets/claude/oauth_token: {e}"
         )))
+}
+
+/// Generate a short task name from the prompt using Claude CLI.
+/// Runs as a non-root user since claude --dangerously-skip-permissions refuses root.
+async fn generate_task_name(prompt: &str) -> Result<String, AppError> {
+    let oauth_token = read_claude_oauth_token().await?;
+    let naming_prompt = format!(
+        "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this coding task. \
+         Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
+    );
+
+    let output = tokio::process::Command::new("sudo")
+        .args([
+            "-u", "nobody",
+            "env",
+            &format!("CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"),
+            "HOME=/tmp",
+            "claude",
+            "--dangerously-skip-permissions",
+            "-p",
+            &naming_prompt,
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to run claude for naming: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Internal(format!(
+            "Claude naming command failed (exit {}): {stderr}",
+            output.status
+        )));
+    }
+
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Take at most 60 chars
+    let name = if name.len() > 60 { name[..60].to_string() } else { name };
+    Ok(name)
+}
+
+/// Convert a task name into a slug suitable for git branch names.
+fn slugify_for_branch(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+    // Collapse multiple dashes and trim
+    let mut result = String::new();
+    let mut prev_dash = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_dash && !result.is_empty() {
+                result.push('-');
+            }
+            prev_dash = true;
+        } else {
+            result.push(c);
+            prev_dash = false;
+        }
+    }
+    result.trim_end_matches('-').to_string()
 }
 
 async fn run_claude_streaming(
@@ -1411,7 +1499,7 @@ pub async fn reopen_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -1480,7 +1568,48 @@ pub async fn reopen_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
+         FROM tasks WHERE id = $1"
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(task))
+}
+
+pub async fn update_task_name(
+    _user: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTaskNameRequest>,
+) -> Result<Json<Task>, AppError> {
+    let _ = sqlx::query_as::<_, Task>(
+        "SELECT id, prompt, repo, base_branch, branch_name, agent_name, status, \
+         preview_slug, preview_url, error_message, \
+         TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
+         TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
+         parent_task_id, created_by, screenshot_url, image_url, \
+         total_input_tokens, total_output_tokens, name \
+         FROM tasks WHERE id = $1"
+    )
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Task not found".into()))?;
+
+    sqlx::query("UPDATE tasks SET name = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&req.name)
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
+
+    let task = sqlx::query_as::<_, Task>(
+        "SELECT id, prompt, repo, base_branch, branch_name, agent_name, status, \
+         preview_slug, preview_url, error_message, \
+         TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
+         TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
+         parent_task_id, created_by, screenshot_url, image_url, \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)

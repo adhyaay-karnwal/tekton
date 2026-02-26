@@ -305,7 +305,10 @@ export default function Tasks() {
                     </span>
                     <Badge variant={statusVariant(t.status).variant} className={statusVariant(t.status).className}>{t.status}</Badge>
                   </div>
-                  <p className="text-sm line-clamp-2 mb-2">{t.prompt}</p>
+                  {t.name && (
+                    <p className="text-sm font-medium mb-1">{t.name}</p>
+                  )}
+                  <p className="text-sm line-clamp-2 mb-2 text-muted-foreground">{t.prompt}</p>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <span>{t.repo}</span>
                     <span>{t.base_branch}</span>

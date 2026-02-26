@@ -29,6 +29,7 @@ export interface Task {
   image_url: string | null;
   total_input_tokens: number | null;
   total_output_tokens: number | null;
+  name: string | null;
 }
 
 export interface TaskMessage {
@@ -152,6 +153,11 @@ export const createTask = (data: { prompt: string; repo: string; base_branch?: s
   apiFetch<Task>('/api/tasks', {
     method: 'POST',
     body: JSON.stringify(data),
+  });
+export const updateTaskName = (id: string, name: string) =>
+  apiFetch<Task>(`/api/tasks/${id}/name`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
   });
 export const getTaskLogs = (id: string) => apiFetch<TaskLog[]>(`/api/tasks/${id}/logs`);
 export const listSubtasks = (id: string) => apiFetch<Task[]>(`/api/tasks/${id}/subtasks`);

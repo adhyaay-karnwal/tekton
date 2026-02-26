@@ -58,6 +58,7 @@ export default function Tasks() {
   const [prompt, setPrompt] = useState('');
   const [repo, setRepo] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
+  const [taskName, setTaskName] = useState('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -109,6 +110,7 @@ export default function Tasks() {
       setPrompt('');
       setRepo('');
       setBaseBranch('main');
+      setTaskName('');
       setImageFiles([]);
       setImagePreviews([]);
     },
@@ -135,6 +137,7 @@ export default function Tasks() {
       repo,
       base_branch: baseBranch || undefined,
       image_urls,
+      name: taskName || undefined,
     });
   };
 
@@ -253,6 +256,15 @@ export default function Tasks() {
                     />
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-name">Task Name <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    id="task-name"
+                    value={taskName}
+                    onChange={(e) => setTaskName(e.target.value)}
+                    placeholder="Short descriptive name..."
+                  />
+                </div>
               </div>
               <Button type="submit" disabled={createMutation.isPending || uploading}>
                 {uploading ? 'Uploading images...' : createMutation.isPending ? 'Creating...' : 'Submit Task'}
@@ -305,7 +317,10 @@ export default function Tasks() {
                     </span>
                     <Badge variant={statusVariant(t.status).variant} className={statusVariant(t.status).className}>{t.status}</Badge>
                   </div>
-                  <p className="text-sm line-clamp-2 mb-2">{t.prompt}</p>
+                  {t.name && (
+                    <p className="text-sm font-medium mb-1">{t.name}</p>
+                  )}
+                  <p className="text-sm line-clamp-2 mb-2 text-muted-foreground">{t.prompt}</p>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <span>{t.repo}</span>
                     <span>{t.base_branch}</span>

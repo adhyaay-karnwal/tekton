@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
     CreateTaskRequest, ListMessagesQuery, ListTasksQuery, PaginatedTasks, SendMessageRequest,
-    Task, TaskAction, TaskLog, TaskMessage,
+    Task, TaskAction, TaskLog, TaskMessage, UpdateTaskNameRequest,
 };
 use crate::shell;
 
@@ -189,7 +189,7 @@ pub async fn list_tasks(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks {where_clause} ORDER BY created_at DESC LIMIT ${bind_idx} OFFSET ${next_idx}",
         bind_idx = bind_idx,
         next_idx = bind_idx + 1,
@@ -220,7 +220,7 @@ pub async fn get_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -247,7 +247,7 @@ pub async fn get_subtasks(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE parent_task_id = $1 ORDER BY created_at ASC"
     )
     .bind(&id)
@@ -297,8 +297,8 @@ pub async fn create_task(
         .map(|v| serde_json::to_string(v).unwrap());
 
     sqlx::query(
-        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url) \
-         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)",
+        "INSERT INTO tasks (id, prompt, repo, base_branch, status, parent_task_id, created_by, image_url, name) \
+         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8)",
     )
     .bind(&id)
     .bind(&req.prompt)
@@ -307,6 +307,7 @@ pub async fn create_task(
     .bind(&req.parent_task_id)
     .bind(created_by)
     .bind(&image_url_json)
+    .bind(&req.name)
     .execute(&state.db)
     .await?;
 
@@ -319,7 +320,7 @@ pub async fn create_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -1411,7 +1412,7 @@ pub async fn reopen_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)
@@ -1480,7 +1481,48 @@ pub async fn reopen_task(
          TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
          TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
          parent_task_id, created_by, screenshot_url, image_url, \
-         total_input_tokens, total_output_tokens \
+         total_input_tokens, total_output_tokens, name \
+         FROM tasks WHERE id = $1"
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(task))
+}
+
+pub async fn update_task_name(
+    _user: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTaskNameRequest>,
+) -> Result<Json<Task>, AppError> {
+    let _ = sqlx::query_as::<_, Task>(
+        "SELECT id, prompt, repo, base_branch, branch_name, agent_name, status, \
+         preview_slug, preview_url, error_message, \
+         TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
+         TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
+         parent_task_id, created_by, screenshot_url, image_url, \
+         total_input_tokens, total_output_tokens, name \
+         FROM tasks WHERE id = $1"
+    )
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Task not found".into()))?;
+
+    sqlx::query("UPDATE tasks SET name = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&req.name)
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
+
+    let task = sqlx::query_as::<_, Task>(
+        "SELECT id, prompt, repo, base_branch, branch_name, agent_name, status, \
+         preview_slug, preview_url, error_message, \
+         TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at, \
+         TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at, \
+         parent_task_id, created_by, screenshot_url, image_url, \
+         total_input_tokens, total_output_tokens, name \
          FROM tasks WHERE id = $1"
     )
     .bind(&id)

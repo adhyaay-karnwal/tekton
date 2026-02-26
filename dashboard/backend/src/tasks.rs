@@ -386,8 +386,18 @@ async fn run_task_pipeline(
 
     // Generate a short name for the task using Claude
     let task_name = match generate_task_name(prompt).await {
-        Ok(name) if !name.is_empty() => name,
-        _ => format!("task-{short_id}"),
+        Ok(name) if !name.is_empty() => {
+            tracing::info!("Generated task name for {task_id}: {name}");
+            name
+        }
+        Ok(_) => {
+            tracing::warn!("Empty task name generated for {task_id}, using fallback");
+            format!("task-{short_id}")
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate task name for {task_id}: {e}");
+            format!("task-{short_id}")
+        }
     };
 
     // Save the generated name to the DB
@@ -469,51 +479,39 @@ async fn read_claude_oauth_token() -> Result<String, AppError> {
         )))
 }
 
-/// Generate a short task name from the prompt using the Anthropic Messages API.
-/// Returns a concise 3-5 word name suitable for display and branch naming.
+/// Generate a short task name from the prompt using Claude CLI.
+/// Runs as a non-root user since claude --dangerously-skip-permissions refuses root.
 async fn generate_task_name(prompt: &str) -> Result<String, AppError> {
     let oauth_token = read_claude_oauth_token().await?;
+    let naming_prompt = format!(
+        "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this coding task. \
+         Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
+    );
 
-    let body = serde_json::json!({
-        "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 30,
-        "messages": [{
-            "role": "user",
-            "content": format!(
-                "Generate a very short name (3-5 words, no quotes, no punctuation) that summarizes this coding task. \
-                 Reply with ONLY the name, nothing else.\n\nTask: {}", prompt
-            )
-        }]
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &oauth_token)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
+    let output = tokio::process::Command::new("sudo")
+        .args([
+            "-u", "nobody",
+            "env",
+            &format!("CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"),
+            "HOME=/tmp",
+            "claude",
+            "--dangerously-skip-permissions",
+            "-p",
+            &naming_prompt,
+        ])
+        .output()
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to call Anthropic API for naming: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("Failed to run claude for naming: {e}")))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AppError::Internal(format!(
-            "Anthropic API returned {status}: {text}"
+            "Claude naming command failed (exit {}): {stderr}",
+            output.status
         )));
     }
 
-    let json: serde_json::Value = resp.json().await
-        .map_err(|e| AppError::Internal(format!("Failed to parse naming response: {e}")))?;
-
-    let name = json["content"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
     // Take at most 60 chars
     let name = if name.len() > 60 { name[..60].to_string() } else { name };
     Ok(name)

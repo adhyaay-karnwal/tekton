@@ -805,6 +805,7 @@ async fn run_task_pipeline(
         &mut preview_created,
         created_by,
         &tx,
+        0,
     )
     .await?;
 
@@ -1303,6 +1304,7 @@ enum FollowUpOutcome {
     Done,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn follow_up_loop(
     ctx: &PipelineCtx<'_>,
     agent_name: &str,
@@ -1311,6 +1313,7 @@ async fn follow_up_loop(
     preview_created: &mut bool,
     created_by: &str,
     tx: &broadcast::Sender<String>,
+    initial_last_seen_id: i64,
 ) -> Result<FollowUpOutcome, AppError> {
     let &PipelineCtx {
         config,
@@ -1321,7 +1324,7 @@ async fn follow_up_loop(
         base_branch: _,
         git_id: _,
     } = ctx;
-    let mut last_seen_id: i64 = 0;
+    let mut last_seen_id: i64 = initial_last_seen_id;
 
     // Track conversation history for context (used as fallback if --continue fails)
     let mut conversation_history: Vec<String> = Vec::new();
@@ -2634,10 +2637,123 @@ async fn run_reopen_pipeline(
         &mut preview_created,
         created_by,
         &tx,
+        0,
     )
     .await?;
 
     // Step 4: Destroy agent container
+    log_and_send(db, task_id, &tx, "[STEP] Destroying agent container...");
+    let _ = shell::destroy_agent(config, &agent_name).await;
+
+    update_task_status(db, task_id, "completed", None).await?;
+    log_and_send(db, task_id, &tx, "[DONE] Task completed.");
+
+    Ok(())
+}
+
+/// Reconnect to an existing live container and re-enter the follow-up loop.
+///
+/// Used during dashboard restart recovery for tasks that already have a container
+/// with the repo checked out. Does NOT create containers or invoke Claude — zero
+/// AI tokens are consumed until the user sends a follow-up message.
+async fn recover_to_followup(
+    ctx: &PipelineCtx<'_>,
+    branch_name: &str,
+    had_preview: bool,
+    created_by: &str,
+    tx: broadcast::Sender<String>,
+) -> Result<(), AppError> {
+    let &PipelineCtx {
+        config,
+        db,
+        task_id,
+        short_id: _,
+        repo,
+        base_branch: _,
+        git_id: _,
+    } = ctx;
+
+    // Look up agent_name from DB
+    let agent_name =
+        sqlx::query_scalar::<_, Option<String>>("SELECT agent_name FROM tasks WHERE id = $1")
+            .bind(task_id)
+            .fetch_one(db)
+            .await?
+            .ok_or_else(|| AppError::Internal("No agent_name for recovered task".into()))?;
+
+    // Check container liveness
+    if shell::agent_ip_public(&agent_name).is_err() {
+        return Err(AppError::Internal(format!(
+            "Agent container '{agent_name}' is no longer reachable"
+        )));
+    }
+
+    log_and_send(
+        db,
+        task_id,
+        &tx,
+        &format!("[STEP] Reconnected to existing agent container '{agent_name}'"),
+    );
+
+    // Refresh the git remote URL with a fresh token so pushes/fetches work
+    let clone_url = format!(
+        "https://x-access-token:{}@github.com/{repo}.git",
+        ctx.git_id.token
+    );
+    let remote_cmd = format!(
+        "cd /home/agent/repo && git remote set-url origin '{}'",
+        clone_url.replace('\'', "'\\''")
+    );
+    if let Err(e) = shell::agent_exec_capture(&agent_name, &remote_cmd).await {
+        tracing::warn!("Failed to refresh git remote URL: {e}");
+    }
+
+    // Load effective policy for enforcement during follow-ups
+    let policy = policies::load_effective_policy(db, repo).await?;
+
+    // Apply network egress restrictions (if any)
+    if let Some(ref pol) = policy {
+        if let Some(ref egress) = pol.network_egress {
+            log_and_send(
+                db,
+                task_id,
+                &tx,
+                "[POLICY] Applying network egress restrictions...",
+            );
+            if let Err(e) = shell::apply_egress_rules(&agent_name, egress).await {
+                log_and_send(
+                    db,
+                    task_id,
+                    &tx,
+                    &format!("[WARN] Failed to apply egress rules: {e}"),
+                );
+            }
+        }
+    }
+
+    // Skip all messages that existed before recovery so we don't replay them
+    let max_msg_id: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM task_messages WHERE task_id = $1")
+            .bind(task_id)
+            .fetch_one(db)
+            .await?;
+
+    // Enter follow-up loop — branch already pushed, preview may already exist
+    let mut branch_pushed = true;
+    let mut preview_created = had_preview;
+    follow_up_loop(
+        ctx,
+        &agent_name,
+        branch_name,
+        &mut branch_pushed,
+        &mut preview_created,
+        created_by,
+        &tx,
+        max_msg_id,
+    )
+    .await?;
+
+    // Destroy agent container after follow-up loop completes
     log_and_send(db, task_id, &tx, "[STEP] Destroying agent container...");
     let _ = shell::destroy_agent(config, &agent_name).await;
 
@@ -2684,7 +2800,7 @@ pub async fn recover_interrupted_tasks(
                         &db,
                         &task.id,
                         "failed",
-                        Some("Interrupted by server restart: missing branch name"),
+                        Some("Interrupted by dashboard restart: missing branch name"),
                     )
                     .await;
                     continue;
@@ -2694,7 +2810,7 @@ pub async fn recover_interrupted_tasks(
                         &db,
                         &task.id,
                         "failed",
-                        Some("Interrupted by server restart: missing created_by"),
+                        Some("Interrupted by dashboard restart: missing created_by"),
                     )
                     .await;
                     continue;
@@ -2706,7 +2822,7 @@ pub async fn recover_interrupted_tasks(
                             &db,
                             &task.id,
                             "failed",
-                            Some(&format!("Interrupted by server restart: {e}")),
+                            Some(&format!("Interrupted by dashboard restart: {e}")),
                         )
                         .await;
                         continue;
@@ -2735,7 +2851,7 @@ pub async fn recover_interrupted_tasks(
                         base_branch: &base,
                         git_id: &git_id,
                     };
-                    let result = run_reopen_pipeline(
+                    let result = recover_to_followup(
                         &ctx,
                         &branch_name,
                         had_preview,
@@ -2752,15 +2868,6 @@ pub async fn recover_interrupted_tasks(
                         )
                         .await;
                         let _ = tx.send(format!("[ERROR] Recovery failed: {e}"));
-                        if let Ok(Some(name)) = sqlx::query_scalar::<_, Option<String>>(
-                            "SELECT agent_name FROM tasks WHERE id = $1",
-                        )
-                        .bind(&task_id)
-                        .fetch_one(&db2)
-                        .await
-                        {
-                            let _ = shell::destroy_agent(&cfg, &name).await;
-                        }
                     }
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -2768,13 +2875,23 @@ pub async fn recover_interrupted_tasks(
                     });
                 });
             }
-            "pending" => {
+            "running_claude" => {
+                let Some(branch_name) = task.branch_name.clone() else {
+                    let _ = update_task_status(
+                        &db,
+                        &task.id,
+                        "failed",
+                        Some("Interrupted by dashboard restart: missing branch name"),
+                    )
+                    .await;
+                    continue;
+                };
                 let Some(ref created_by) = task.created_by else {
                     let _ = update_task_status(
                         &db,
                         &task.id,
                         "failed",
-                        Some("Interrupted by server restart: missing created_by"),
+                        Some("Interrupted by dashboard restart: missing created_by"),
                     )
                     .await;
                     continue;
@@ -2786,27 +2903,39 @@ pub async fn recover_interrupted_tasks(
                             &db,
                             &task.id,
                             "failed",
-                            Some(&format!("Interrupted by server restart: {e}")),
+                            Some(&format!("Interrupted by dashboard restart: {e}")),
                         )
                         .await;
                         continue;
                     }
                 };
+
+                // Insert system message explaining the interruption
+                let _ = save_system_message(
+                    &db,
+                    &task.id,
+                    "Dashboard restarted while Claude was working. Send a follow-up message to continue the conversation.",
+                ).await;
+
+                // Transition to awaiting_followup so the user can resume
+                let _ = update_task_status(&db, &task.id, "awaiting_followup", None).await;
+
                 let short_id = task.id[..6].to_string();
+                let had_preview = task.preview_url.is_some();
                 let (tx, _) = broadcast::channel(1024);
                 task_channels.insert(task.id.clone(), tx.clone());
 
                 let (cfg, db2, channels) = (config.clone(), db.clone(), task_channels.clone());
-                let (task_id, prompt, repo, base, image_url, created_by) = (
+                let (task_id, repo, base, created_by) = (
                     task.id.clone(),
-                    task.prompt.clone(),
                     task.repo.clone(),
                     task.base_branch.clone(),
-                    task.image_url.clone(),
                     created_by.clone(),
                 );
                 tokio::spawn(async move {
-                    tracing::info!("Recovering pending task {task_id}");
+                    tracing::info!(
+                        "Recovering running_claude task {task_id} (→ awaiting_followup)"
+                    );
                     let ctx = PipelineCtx {
                         config: &cfg,
                         db: &db2,
@@ -2816,11 +2945,10 @@ pub async fn recover_interrupted_tasks(
                         base_branch: &base,
                         git_id: &git_id,
                     };
-                    let result = run_task_pipeline(
+                    let result = recover_to_followup(
                         &ctx,
-                        &prompt,
-                        image_url.as_deref(),
-                        None,
+                        &branch_name,
+                        had_preview,
                         &created_by,
                         tx.clone(),
                     )
@@ -2834,21 +2962,39 @@ pub async fn recover_interrupted_tasks(
                         )
                         .await;
                         let _ = tx.send(format!("[ERROR] Recovery failed: {e}"));
-                        if let Ok(Some(name)) = sqlx::query_scalar::<_, Option<String>>(
-                            "SELECT agent_name FROM tasks WHERE id = $1",
-                        )
-                        .bind(&task_id)
-                        .fetch_one(&db2)
-                        .await
-                        {
-                            let _ = shell::destroy_agent(&cfg, &name).await;
-                        }
                     }
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                         channels.remove(&task_id);
                     });
                 });
+            }
+            "pending" => {
+                tracing::info!("Task {} was pending at restart, marking failed", task.id);
+                let _ = update_task_status(
+                    &db,
+                    &task.id,
+                    "failed",
+                    Some("Interrupted by dashboard restart. Please create a new task."),
+                )
+                .await;
+            }
+            "creating_agent" | "cloning" | "pushing" | "creating_preview" => {
+                tracing::info!(
+                    "Task {} was interrupted during '{}', marking failed",
+                    task.id,
+                    task.status
+                );
+                let _ = update_task_status(
+                    &db,
+                    &task.id,
+                    "failed",
+                    Some(&format!(
+                        "Interrupted by dashboard restart during {}. Use Reopen to continue.",
+                        task.status
+                    )),
+                )
+                .await;
             }
             other => {
                 tracing::info!(
@@ -2859,7 +3005,7 @@ pub async fn recover_interrupted_tasks(
                     &db,
                     &task.id,
                     "failed",
-                    Some("Interrupted by server restart. Use Reopen to continue."),
+                    Some("Interrupted by dashboard restart. Use Reopen to continue."),
                 )
                 .await;
             }

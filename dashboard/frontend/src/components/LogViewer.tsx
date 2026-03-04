@@ -17,11 +17,13 @@ function writeLine(term: Terminal, line: string) {
 const TERM_OPTIONS = {
   convertEol: true,
   fontSize: 13,
-  fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+  fontFamily: '"Geist Mono", Menlo, Monaco, "Courier New", monospace',
   theme: {
-    background: '#1a1b26',
-    foreground: '#c0caf5',
-    cursor: '#c0caf5',
+    background: '#1a1a22',
+    foreground: '#c8c8d0',
+    cursor: '#c8c8d0',
+    selectionBackground: 'rgba(200, 200, 208, 0.15)',
+    selectionForeground: '#ffffff',
   },
   scrollback: 10000,
   disableStdin: true,
@@ -181,9 +183,11 @@ export default function LogViewer({ taskId, previewSlug, ws, onConnectionChange 
   }, [taskId, previewSlug, ws]);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-[500px] overflow-hidden"
-    />
+    <div className="overflow-hidden h-full">
+      <div
+        ref={containerRef}
+        className="w-full h-full overflow-hidden"
+      />
+    </div>
   );
 }

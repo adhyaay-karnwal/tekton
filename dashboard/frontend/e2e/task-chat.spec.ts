@@ -3,19 +3,21 @@ import { test, expect, TEST_IDS } from './fixtures';
 test.describe.serial('Task Chat', () => {
   // Read-only tests first — these don't change task state
 
-  test('shows Follow-up Chat heading for awaiting task', async ({ adminPage }) => {
+  test('shows Conversation tab for awaiting task', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
-    await expect(adminPage.getByText('Follow-up Chat')).toBeVisible();
+    await expect(adminPage.getByRole('tab', { name: 'Conversation' })).toBeVisible();
   });
 
   test('renders seeded messages', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
+    await adminPage.getByRole('tab', { name: 'Conversation' }).click();
     await expect(adminPage.getByText('fixed the button alignment')).toBeVisible();
     await expect(adminPage.getByText('center it vertically')).toBeVisible();
   });
 
   test('renders system message with spinner', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
+    await adminPage.getByRole('tab', { name: 'Conversation' }).click();
     await expect(adminPage.getByText('Claude is thinking...')).toBeVisible();
   });
 
@@ -26,32 +28,33 @@ test.describe.serial('Task Chat', () => {
 
   test('send button is disabled when input is empty', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
+    await adminPage.getByRole('tab', { name: 'Conversation' }).click();
     const sendBtn = adminPage.locator('button[type="submit"]');
     await expect(sendBtn).toBeDisabled();
   });
 
-  test('preview URL banner is visible', async ({ adminPage }) => {
+  test('shows Preview tab for task with preview URL', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
-    await expect(adminPage.getByText('Check the current result:')).toBeVisible();
-    await expect(adminPage.getByText('https://my-preview.test.example.com/fix-button')).toBeVisible();
+    await expect(adminPage.getByRole('tab', { name: 'Preview' })).toBeVisible();
   });
 
   test('shows "You" label on own message', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
+    await adminPage.getByRole('tab', { name: 'Conversation' }).click();
     // Logged in as testadmin, so "testadmin" sender should show "You"
     await expect(adminPage.getByText('You').first()).toBeVisible();
   });
 
-  test('viewer cannot see Follow-up Chat', async ({ viewerPage }) => {
+  test('viewer cannot see Conversation tab', async ({ viewerPage }) => {
     await viewerPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
-    // Viewer restriction: TaskDetail.tsx line 259 — showChat && me && !isViewer
-    await expect(viewerPage.getByText('Follow-up Chat')).toHaveCount(0);
+    await expect(viewerPage.getByRole('tab', { name: 'Conversation' })).toHaveCount(0);
   });
 
   // Destructive tests last — these send messages that may transition task state
 
   test('typing and sending a message posts it', async ({ adminPage }) => {
     await adminPage.goto(`/tasks/${TEST_IDS.tasks.awaiting}`);
+    await adminPage.getByRole('tab', { name: 'Conversation' }).click();
 
     const requestPromise = adminPage.waitForRequest((req) =>
       req.url().includes(`/api/tasks/${TEST_IDS.tasks.awaiting}/messages`) && req.method() === 'POST'

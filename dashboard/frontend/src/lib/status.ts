@@ -9,18 +9,26 @@ export function statusVariant(status: string): {
   switch (status) {
     case "completed":
       return {
-        variant: "default",
-        className: "bg-green-600 text-white border-transparent",
+        variant: "outline",
+        className: "text-emerald-700 dark:text-emerald-400/80 border-emerald-700/20 dark:border-emerald-400/20",
         icon: Check,
       };
     case "failed":
-      return { variant: "destructive", icon: X };
+      return {
+        variant: "outline",
+        className: "text-red-700 dark:text-red-400/80 border-red-700/20 dark:border-red-400/20",
+        icon: X,
+      };
     case "pending":
-      return { variant: "outline", icon: Clock };
+      return {
+        variant: "outline",
+        className: "text-muted-foreground",
+        icon: Clock,
+      };
     case "awaiting_followup":
       return {
-        variant: "secondary",
-        className: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+        variant: "outline",
+        className: "text-amber-700 dark:text-amber-400/80 border-amber-700/20 dark:border-amber-400/20",
         icon: Clock,
       };
     case "creating_agent":
@@ -28,8 +36,13 @@ export function statusVariant(status: string): {
     case "running_claude":
     case "pushing":
     case "creating_preview":
-      return { variant: "secondary", icon: Loader2, spin: true };
+      return {
+        variant: "outline",
+        className: "text-blue-700 dark:text-blue-400/70 border-blue-700/20 dark:border-blue-400/20",
+        icon: Loader2,
+        spin: true,
+      };
     default:
-      return { variant: "secondary" };
+      return { variant: "outline" };
   }
 }

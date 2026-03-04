@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe, logout, listTasks } from '@/lib/api';
-import { LayoutDashboard, Container, BrainCircuit, LogOut, Shield, SlidersHorizontal, DollarSign, ScrollText } from 'lucide-react';
+import { LayoutDashboard, Container, BrainCircuit, LogOut, Shield, SlidersHorizontal, DollarSign, ScrollText, Sun, Moon } from 'lucide-react';
+import { useTheme } from '@/hooks/use-theme';
 import { Toaster, toast } from 'sonner';
+import CommandPalette from '@/components/CommandPalette';
 import {
   Sidebar,
   SidebarContent,
@@ -43,6 +45,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { theme, toggleTheme } = useTheme();
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
@@ -63,6 +66,54 @@ export default function Layout() {
   useEffect(() => {
     document.title = runningCount > 0 ? `Tekton (${runningCount} running)` : 'Tekton';
   }, [runningCount]);
+
+  // Favicon badge when tasks are running
+  const originalFavicon = useRef<string | null>(null);
+  const updateFavicon = useCallback((running: number) => {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+      ?? document.createElement('link');
+    link.rel = 'icon';
+
+    if (!originalFavicon.current) {
+      originalFavicon.current = link.href || '/vite.svg';
+    }
+
+    if (running === 0) {
+      link.href = originalFavicon.current;
+      if (!link.parentElement) document.head.appendChild(link);
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const size = 32;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, size, size);
+      // Teal dot in bottom-right
+      const dotRadius = 6;
+      const cx = size - dotRadius - 1;
+      const cy = size - dotRadius - 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotRadius, 0, 2 * Math.PI);
+      ctx.fillStyle = '#14b8a6';
+      ctx.fill();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      link.href = canvas.toDataURL('image/png');
+      if (!link.parentElement) document.head.appendChild(link);
+    };
+    img.src = originalFavicon.current;
+  }, []);
+
+  useEffect(() => {
+    updateFavicon(runningCount);
+  }, [runningCount, updateFavicon]);
 
   // Toast notifications on status transitions
   const prevStatuses = useRef<Map<string, string> | null>(null);
@@ -226,26 +277,42 @@ export default function Layout() {
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
+              <SidebarMenuButton tooltip={theme === 'dark' ? 'Light mode' : 'Dark mode'} onClick={toggleTheme}>
+                {theme === 'dark' ? <Sun /> : <Moon />}
+                <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
               <SidebarMenuButton tooltip="Logout" onClick={handleLogout}>
                 <LogOut />
                 <span>Logout</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <div className="flex items-center justify-center py-1 group-data-[collapsible=icon]:hidden">
+                <kbd className="pointer-events-none text-[10px] text-muted-foreground bg-secondary rounded px-1.5 py-0.5">
+                  {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
+                </kbd>
+              </div>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <span className="text-sm text-muted-foreground">
-            {NAV_ITEMS.find((n) => isActive(n.to))?.label ?? (isActive('/admin') ? 'Admin' : isActive('/cost') ? 'Cost' : isActive('/audit') ? 'Audit Log' : '')}
-          </span>
-        </header>
-        <main className="flex-1 p-6">
-          <Outlet />
-        </main>
+        <div className="min-h-screen">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <span className="text-sm text-muted-foreground">
+              {NAV_ITEMS.find((n) => isActive(n.to))?.label ?? (isActive('/admin') ? 'Admin' : isActive('/cost') ? 'Cost' : isActive('/audit') ? 'Audit Log' : '')}
+            </span>
+          </header>
+          <main className="flex-1 p-6 page-enter" key={location.pathname}>
+            <Outlet />
+          </main>
+        </div>
       </SidebarInset>
+      <CommandPalette />
       <Toaster position="bottom-right" richColors closeButton />
     </SidebarProvider>
   );

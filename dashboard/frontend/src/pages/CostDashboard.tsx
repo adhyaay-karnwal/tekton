@@ -101,7 +101,7 @@ function SummaryCards({ days }: { days: number }) {
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       {cards.map((c) => (
-        <Card key={c.title}>
+        <Card key={c.title} className="">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               {c.title}
@@ -112,7 +112,7 @@ function SummaryCards({ days }: { days: number }) {
             {isLoading ? (
               <p className="text-muted-foreground text-sm">Loading...</p>
             ) : (
-              <p className="text-2xl font-bold">{c.value}</p>
+              <p className="text-2xl font-bold tabular-nums">{c.value}</p>
             )}
           </CardContent>
         </Card>
@@ -127,21 +127,34 @@ function SpendChart({ days }: { days: number }) {
     queryFn: () => getCostTrends(days),
   });
 
-  const maxCost = trends?.length
+  const rawMax = trends?.length
     ? Math.max(...trends.map((t: CostTrend) => t.cost_usd), 0.01)
     : 1;
+
+  // Round max up to a nice number for clean tick labels
+  function niceMax(v: number): number {
+    if (v <= 0) return 1;
+    const mag = Math.pow(10, Math.floor(Math.log10(v)));
+    const norm = v / mag;
+    if (norm <= 1) return mag;
+    if (norm <= 2) return 2 * mag;
+    if (norm <= 5) return 5 * mag;
+    return 10 * mag;
+  }
+  const maxCost = niceMax(rawMax);
 
   // SVG dimensions
   const width = 800;
   const height = 200;
-  const padX = 40;
+  const padLeft = 60;
+  const padRight = 20;
   const padTop = 10;
   const padBottom = 30;
-  const chartW = width - padX * 2;
+  const chartW = width - padLeft - padRight;
   const chartH = height - padTop - padBottom;
 
   const points = trends?.map((t: CostTrend, i: number) => {
-    const x = padX + (trends.length === 1 ? chartW / 2 : (i / (trends.length - 1)) * chartW);
+    const x = padLeft + (trends.length === 1 ? chartW / 2 : (i / (trends.length - 1)) * chartW);
     const y = padTop + chartH - (t.cost_usd / maxCost) * chartH;
     return { x, y, t };
   }) ?? [];
@@ -151,8 +164,9 @@ function SpendChart({ days }: { days: number }) {
     ? ` L${points[points.length - 1].x},${padTop + chartH} L${points[0].x},${padTop + chartH} Z`
     : '');
 
-  // Y-axis ticks
+  // Y-axis ticks — clean round numbers
   const yTicks = [0, maxCost / 2, maxCost];
+  const fmtTick = (v: number) => v >= 1 ? `$${Math.round(v)}` : `$${v.toFixed(2)}`;
 
   return (
     <Card>
@@ -168,15 +182,15 @@ function SpendChart({ days }: { days: number }) {
         ) : !trends?.length ? (
           <p className="text-muted-foreground text-sm">No data for this period.</p>
         ) : (
-          <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48" preserveAspectRatio="none">
+          <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48">
             {/* Grid lines */}
             {yTicks.map((v) => {
               const y = padTop + chartH - (v / maxCost) * chartH;
               return (
                 <g key={v}>
-                  <line x1={padX} y1={y} x2={width - padX} y2={y} stroke="currentColor" strokeOpacity={0.1} />
-                  <text x={padX - 4} y={y + 3} textAnchor="end" className="fill-muted-foreground" style={{ fontSize: 10 }}>
-                    ${v.toFixed(2)}
+                  <line x1={padLeft} y1={y} x2={width - padRight} y2={y} stroke="currentColor" strokeOpacity={0.15} />
+                  <text x={padLeft - 8} y={y + 4} textAnchor="end" className="fill-muted-foreground" style={{ fontSize: 11 }}>
+                    {fmtTick(v)}
                   </text>
                 </g>
               );
@@ -191,7 +205,7 @@ function SpendChart({ days }: { days: number }) {
               const label = `${date.getMonth() + 1}/${date.getDate()}`;
               return (
                 <g key={p.t.day}>
-                  <circle cx={p.x} cy={p.y} r={3} className="fill-primary" />
+                  <circle cx={p.x} cy={p.y} r={4} className="fill-primary" />
                   <title>{`${label}: $${p.t.cost_usd.toFixed(2)} (${p.t.task_count} tasks)`}</title>
                   {trends!.length <= 31 && (
                     <text x={p.x} y={padTop + chartH + 16} textAnchor="middle" className="fill-muted-foreground" style={{ fontSize: 9 }}>
@@ -238,9 +252,9 @@ function CostByUserTable({ days }: { days: number }) {
           <p className="text-muted-foreground text-sm">No data for this period.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm tabular-nums">
               <thead>
-                <tr className="border-b text-left text-muted-foreground">
+                <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="pb-2 pr-4 font-medium">User</th>
                   <th className="pb-2 pr-4 font-medium text-right">Input Tokens</th>
                   <th className="pb-2 pr-4 font-medium text-right">Output Tokens</th>
@@ -250,7 +264,7 @@ function CostByUserTable({ days }: { days: number }) {
               </thead>
               <tbody>
                 {data.map((row: CostGroupRow) => (
-                  <tr key={row.group_key} className="border-b border-border/50">
+                  <tr key={row.group_key} className="border-b border-border/50 hover:bg-secondary/40 transition-colors duration-100">
                     <td className="py-2 pr-4 font-mono">{row.group_key}</td>
                     <td className="py-2 pr-4 text-right">{row.total_input_tokens.toLocaleString()}</td>
                     <td className="py-2 pr-4 text-right">{row.total_output_tokens.toLocaleString()}</td>
@@ -288,9 +302,9 @@ function CostByRepoTable({ days }: { days: number }) {
           <p className="text-muted-foreground text-sm">No data for this period.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm tabular-nums">
               <thead>
-                <tr className="border-b text-left text-muted-foreground">
+                <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="pb-2 pr-4 font-medium">Repository</th>
                   <th className="pb-2 pr-4 font-medium text-right">Input Tokens</th>
                   <th className="pb-2 pr-4 font-medium text-right">Output Tokens</th>
@@ -300,7 +314,7 @@ function CostByRepoTable({ days }: { days: number }) {
               </thead>
               <tbody>
                 {data.map((row: CostGroupRow) => (
-                  <tr key={row.group_key} className="border-b border-border/50">
+                  <tr key={row.group_key} className="border-b border-border/50 hover:bg-secondary/40 transition-colors duration-100">
                     <td className="py-2 pr-4 font-mono">{row.group_key}</td>
                     <td className="py-2 pr-4 text-right">{row.total_input_tokens.toLocaleString()}</td>
                     <td className="py-2 pr-4 text-right">{row.total_output_tokens.toLocaleString()}</td>
@@ -381,9 +395,9 @@ function BudgetsSection() {
           <p className="text-muted-foreground text-sm">No budgets configured.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm tabular-nums">
               <thead>
-                <tr className="border-b text-left text-muted-foreground">
+                <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="pb-2 pr-4 font-medium">Scope</th>
                   <th className="pb-2 pr-4 font-medium">Value</th>
                   <th className="pb-2 pr-4 font-medium text-right">Monthly Limit</th>
@@ -394,7 +408,7 @@ function BudgetsSection() {
               </thead>
               <tbody>
                 {budgets.map((b) => (
-                  <tr key={b.id} className="border-b border-border/50">
+                  <tr key={b.id} className="border-b border-border/50 hover:bg-secondary/40 transition-colors duration-100">
                     <td className="py-2 pr-4">
                       <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium">
                         {b.scope_type}

@@ -857,14 +857,50 @@ async fn build_claude_auth_env(
                 String::new(),
             ))
         }
+        Some(cfg) if cfg.provider == "anthropic-oauth" => Ok((
+            format!(
+                "export CLAUDE_CODE_OAUTH_TOKEN='{}' ANTHROPIC_API_KEY=''",
+                cfg.api_key
+            ),
+            String::new(),
+        )),
         Some(cfg) => Ok((
             format!("export ANTHROPIC_API_KEY='{}'", cfg.api_key),
             String::new(),
         )),
-        None => Err(AppError::Internal(
-            "No AI provider configured. Go to Settings → AI Provider to connect your account."
-                .into(),
-        )),
+        None => {
+            // Fallback to the global admin-configured key
+            match settings::get_global_ai_config(db, encryption_key).await? {
+                Some(cfg) if cfg.provider == "openrouter" => {
+                    let model = cfg
+                        .model
+                        .as_deref()
+                        .unwrap_or("anthropic/claude-sonnet-4.6");
+                    Ok((
+                        format!(
+                            "export ANTHROPIC_BASE_URL='https://openrouter.ai/api' ANTHROPIC_AUTH_TOKEN='{}' ANTHROPIC_API_KEY='' ANTHROPIC_MODEL='{}'",
+                            cfg.api_key, model
+                        ),
+                        String::new(),
+                    ))
+                }
+                Some(cfg) if cfg.provider == "anthropic-oauth" => Ok((
+                    format!(
+                "export CLAUDE_CODE_OAUTH_TOKEN='{}' ANTHROPIC_API_KEY=''",
+                cfg.api_key
+            ),
+                    String::new(),
+                )),
+                Some(cfg) => Ok((
+                    format!("export ANTHROPIC_API_KEY='{}'", cfg.api_key),
+                    String::new(),
+                )),
+                None => Err(AppError::Internal(
+                    "No AI provider configured. Go to Settings → AI Provider to connect your account, or ask an admin to set up a global API key."
+                        .into(),
+                )),
+            }
+        }
     }
 }
 
